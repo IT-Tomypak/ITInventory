@@ -1,0 +1,10 @@
+#!/bin/sh
+# tools/hooks/pre-commit — the checks that need no network, no login and no
+# running site, so they are cheap enough to run on every commit.
+# Install once per clone:   git config core.hooksPath tools/hooks
+# Skip in an emergency:     git commit --no-verify   (then run them by hand)
+set -e
+node tools/check-schema.mjs >/dev/null 2>&1 || { echo "pre-commit: check-schema failed (run: node tools/check-schema.mjs)"; exit 1; }
+node tools/check-xlsx.mjs   >/dev/null 2>&1 || { echo "pre-commit: check-xlsx failed (run: node tools/check-xlsx.mjs)"; exit 1; }
+node tools/check-help.mjs   >/dev/null 2>&1 || { echo "pre-commit: check-help failed (run: node tools/build-help.mjs, then node tools/check-help.mjs)"; exit 1; }
+echo "pre-commit: schema, xlsx and help checks pass"

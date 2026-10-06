@@ -10,6 +10,13 @@ the running version is in `app/version.js` and shown in the app's sidebar.
   checks that every help link resolves.
 - `FEATURES.md`, `CHANGELOG.md`, `VERSION_HISTORY.md`.
 - Printing no longer keeps the sidebar's left margin.
+- **Packaging (phase 9).** `npm run package` builds the deploy zip with Unix
+  permissions; `check-zip-perms.mjs` verifies it. `.htaccess` (HTTPS, 404 page,
+  gzip, cache headers), `manifest.json` with an SVG icon, and `sw.js` (installed
+  app opens offline). `check-nopng.mjs` simulates hotlink protection.
+- `check-schema.mjs` runs again: it stubs pg_net and Vault, and now covers the
+  notification triggers and email links. `tools/hooks/pre-commit` runs the
+  offline checks.
 
 ## 2026-10-06
 

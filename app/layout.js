@@ -12,6 +12,10 @@ const FAVICON = "data:image/svg+xml," + encodeURIComponent(
   '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32"><rect width="32" height="32" rx="8" fill="#16488c"/>' +
   '<path d="M9 11.5 16 8l7 3.5v9L16 24l-7-3.5zM9 11.5 16 15l7-3.5M16 15v9" fill="none" stroke="#fff" stroke-width="2" stroke-linejoin="round"/></svg>');
 
+// Registered after load so it never competes with the first paint. sw.js
+// itself explains what it caches (pages network-first, hashed files cache-first).
+const SW_SCRIPT = `if("serviceWorker" in navigator)addEventListener("load",function(){navigator.serviceWorker.register("/sw.js").catch(function(){})})`;
+
 export const metadata = {
   title: "ITrack — IT Asset Management",
   description: "Tomypak Flexible Packaging Sdn Bhd — IT hardware register and assignments",
@@ -24,6 +28,9 @@ export default function RootLayout({ children }) {
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_SCRIPT }} />
         <link rel="icon" href={FAVICON} />
+        <link rel="manifest" href="/manifest.json" />
+        <meta name="theme-color" content="#16488c" />
+        <script dangerouslySetInnerHTML={{ __html: SW_SCRIPT }} />
       </head>
       <body>
         <AuthProvider>

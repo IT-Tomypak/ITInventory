@@ -13,7 +13,16 @@ const db = new PGlite({ extensions: { pgcrypto } });
 await db.exec(`
 create schema auth; create schema storage; create schema extensions;
 create role anon; create role authenticated; create role service_role;
-create table auth.users(id uuid primary key, raw_app_meta_data jsonb default '{}');
+create table auth.users(id uuid primary key, raw_app_meta_data jsonb default '{}', email text);
+-- pg_net and Vault do not exist in PGlite. net.http_post records each call so
+-- the notification triggers can be asserted; the migration's CREATE EXTENSION
+-- pg_net line is skipped when the migrations are loaded below.
+create schema net; create schema vault;
+create table net.calls(id serial, body jsonb, headers jsonb);
+create function net.http_post(url text, headers jsonb, body jsonb, timeout_milliseconds int) returns bigint
+  language sql as $$ insert into net.calls(body, headers) values (body, headers) returning id::bigint $$;
+create table vault.decrypted_secrets(name text, decrypted_secret text);
+insert into vault.decrypted_secrets values ('notify_webhook_secret', 'test-secret');
 create function auth.jwt() returns jsonb language sql stable as $$ select coalesce(nullif(current_setting('request.jwt.claims', true),''),'{}')::jsonb $$;
 create function auth.uid() returns uuid language sql stable as $$ select nullif(auth.jwt()->>'sub','')::uuid $$;
 create function auth.role() returns text language sql stable as $$ select auth.jwt()->>'role' $$;
@@ -32,7 +41,7 @@ insert into auth.users values
  ('00000000-0000-0000-0000-00000000000d','{"role":"approver"}');
 `);
 for (const f of fs.readdirSync("supabase/migrations").filter((f) => f.endsWith(".sql")).sort())
-  await db.exec(fs.readFileSync("supabase/migrations/" + f, "utf8"));
+  await db.exec(fs.readFileSync("supabase/migrations/" + f, "utf8").replace(/^create extension if not exists pg_net.*$/m, ""));
 const who = { admin: ["a", "admin", "9001"], officer: ["b", null, "9002"], viewer: ["c", "viewer", "9003"], approver: ["d", "approver", "9004"] };
 async function as(name, sql) {
   const [s, role, id] = who[name];
@@ -157,4 +166,28 @@ await refused(() => db.query("select * from assets"), "anon reads assets");
 await refused(() => db.query("select public.log_login()"), "anon executes functions");
 await db.query("reset role");
 r = await db.query("insert into assign_token(request_id) values (null) returning token"); ok(/^[A-Za-z0-9_-]{43}$/.test(r.rows[0].token), "token is base64url " + r.rows[0].token);
+
+// ---- email (phase 6); net.http_post is the recording stub at the top
+const asService = async (sql, params) => {
+  await db.query("reset role");
+  await db.query("select set_config('request.jwt.claims', $1, false)", [JSON.stringify({ role: "service_role" })]);
+  return db.query(sql, params);
+};
+const req1 = (await db.query("select min(request_id)::int id from equipment_request")).rows[0].id;
+r = await db.query("select body->>'kind' k, headers->>'x-webhook-secret' s from net.calls where (body->>'request_id')::int = $1 and body->>'kind' in ('new_request', 'receipt')", [req1]);
+ok(r.rows.map((x) => x.k).sort().join() === "new_request,receipt" && r.rows.every((x) => x.s === "test-secret"),
+  "a public request queues new_request + receipt, with the webhook secret " + JSON.stringify(r.rows));
+const tok = (await asService("select create_assignment_link($1, 'assign_officer') t", [req1])).rows[0].t;
+r = await asService("select assignment_link($1, '2') j", [tok]);
+ok(r.rows[0].j.ok && /Olly Officer/.test(r.rows[0].j.what), "email link preview says what will happen " + JSON.stringify(r.rows[0].j));
+const linkState = () => db.query("select r.handled_by, t.used_at from equipment_request r, assign_token t where r.request_id = $1 and t.token = $2", [req1, tok]).then((x) => x.rows[0]);
+r = await linkState(); ok(r.handled_by === null && r.used_at === null, "opening the link (preview) writes nothing");
+r = await asService("select assignment_link($1, '2', null, '198.51.100.7', true) j", [tok]); ok(r.rows[0].j.done, "confirm press acts");
+r = await linkState(); ok(r.handled_by === 2 && r.used_at !== null, "confirm press wrote the handler and burnt the token");
+r = await asService("select assignment_link($1, '2', null, null, true) j", [tok]); ok(!r.rows[0].j.ok && /already used/.test(r.rows[0].j.reason), "second press refused");
+await refused(() => asAnon("select assignment_link($1, '2')", [tok]), "anon calls assignment_link directly");
+await refused(() => asAnon("select get_notify_config()"), "anon reads notify secrets");
+await refused(() => as("officer", "select get_notify_config()"), "officer reads notify secrets");
+await refused(() => as("officer", `select create_assignment_link(${req1}, 'allocate')`), "officer mints an email link");
+
 console.log(fails ? fails + " FAILED" : "ALL PASS"); process.exit(fails ? 1 : 0);
