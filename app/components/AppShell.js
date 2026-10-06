@@ -362,7 +362,7 @@ export default function AppShell({ children }) {
         </div>
       )}
 
-      <div className={cn("transition-[padding]", collapsed ? "md:pl-[4.5rem]" : "md:pl-60")}>
+      <div className={cn("transition-[padding] print:!pl-0", collapsed ? "md:pl-[4.5rem]" : "md:pl-60")}>
         <header className="no-print sticky top-0 z-20 border-b border-border bg-surface/90 backdrop-blur"
           style={{ paddingTop: "env(safe-area-inset-top)" }}>
           <div className="flex h-14 items-center gap-2 px-3 md:px-6">

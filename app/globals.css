@@ -45,3 +45,18 @@ body {
 @media print {
   .no-print { display: none !important; }
 }
+
+/* The user guide (/help): HTML compiled from USER_GUIDE.md by build-help.mjs. */
+.guide h2 { @apply mt-8 border-b border-border pb-1 text-xl font-semibold; }
+.guide section:first-child h2 { @apply mt-0; }
+.guide h3 { @apply mt-6 text-base font-semibold; }
+.guide p, .guide ul, .guide ol, .guide table, .guide blockquote { @apply mt-3 text-sm leading-relaxed; }
+.guide ul { @apply list-disc pl-5; }
+.guide ol { @apply list-decimal pl-5; }
+.guide li + li { @apply mt-1; }
+.guide a { @apply text-brand underline underline-offset-2; }
+.guide code { @apply rounded bg-sunken px-1 py-0.5 text-[0.85em]; }
+.guide blockquote { @apply rounded-lg border-l-4 border-brand bg-brand/5 px-3 py-2; }
+.guide table { @apply block w-full overflow-x-auto border-collapse; }
+.guide th, .guide td { @apply border border-border px-2 py-1.5 text-left align-top; }
+.guide th { @apply bg-sunken font-medium; }
