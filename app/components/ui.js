@@ -227,7 +227,7 @@ export function Pagination({ page, pageSize, total, onPage, onPageSize }) {
 }
 
 // ---------------------------------------------------------------- modals
-export function ModalPortal({ open, onClose, children, labelledBy }) {
+export function ModalPortal({ open, onClose, children, labelledBy, wide }) {
   const [mounted, setMounted] = useState(false);
   useEffect(() => setMounted(true), []);
   useEffect(() => {
@@ -241,7 +241,7 @@ export function ModalPortal({ open, onClose, children, labelledBy }) {
     <div className="fixed inset-0 z-[90] flex items-end justify-center bg-black/40 p-0 sm:items-center sm:p-4"
       onMouseDown={(e) => e.target === e.currentTarget && onClose?.()}>
       <div role="dialog" aria-modal="true" aria-labelledby={labelledBy}
-        className="max-h-[90vh] w-full overflow-auto rounded-t-2xl border border-border bg-surface p-5 shadow-xl sm:max-w-lg sm:rounded-2xl">
+        className={cn("max-h-[90vh] w-full overflow-auto rounded-t-2xl border border-border bg-surface p-5 shadow-xl sm:rounded-2xl", wide ? "sm:max-w-3xl" : "sm:max-w-lg")}>
         {children}
       </div>
     </div>,

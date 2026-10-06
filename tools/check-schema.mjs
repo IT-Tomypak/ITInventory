@@ -71,6 +71,8 @@ await as("officer", "insert into asset_assignment(asset_id, staff_id, condition_
 r = await as("officer", "select status from assets"); ok(r.rows[0].status === "Assigned", "open assignment -> Assigned");
 await refused(() => as("officer", "insert into asset_assignment(asset_id, location_id) values (1, 1)"), "second open assignment");
 await refused(() => as("officer", "update assets set status='Retired' where asset_id=1"), "retire while held");
+await refused(() => as("officer", "update assets set status='In stock' where asset_id=1"), "manual In stock while held");
+await refused(() => as("officer", "insert into assets(asset_tag, asset_type, status) values ('IT-0002','Laptop','Assigned')"), "Assigned with no holder");
 await as("officer", "update asset_assignment set returned_on=current_date, return_status='In repair', condition_in='Damaged' where asset_id=1");
 r = await as("officer", "select status from assets"); ok(r.rows[0].status === "In repair", "return with In repair");
 r = await as("officer", "select issued_by is not null and received_by is not null as ok from asset_assignment"); ok(r.rows[0].ok, "issued_by/received_by stamped");
