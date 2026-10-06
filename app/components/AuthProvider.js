@@ -69,7 +69,8 @@ export function AuthProvider({ children }) {
         // Await BEFORE signOut(): afterwards there is no JWT left for the
         // database to read auth.uid() from.
         try { await supabase.rpc("log_logout"); } catch { /* best effort */ }
-        try { sessionStorage.removeItem("itrack-approver-landed"); } catch { /* private mode */ } // APPROVER_LANDED_KEY in AppShell
+        // APPROVER_LANDED_KEY and BRIEFED_KEY in AppShell: once per sign-in each.
+        try { ["itrack-approver-landed", "itrack-briefed"].forEach((k) => sessionStorage.removeItem(k)); } catch { /* private mode */ }
         await supabase.auth.signOut();
       },
     };

@@ -3,12 +3,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  ArrowLeftRight, BarChart3, BookOpen, Boxes, CalendarClock, ChevronsLeft, ChevronsRight,
+  ArrowLeftRight, BarChart3, Bell, BookOpen, Boxes, CalendarClock, ChevronsLeft, ChevronsRight,
   ClipboardList, Database, History, LogOut, Menu, ScrollText, Search, User, UserCog, Wallet, X,
 } from "lucide-react";
 import { supabase } from "../../lib/supabaseClient";
+import { ALERT_TONES, loadAlerts } from "../../lib/alerts";
 import { PUBLIC_ROUTES, useAuth } from "./AuthProvider";
-import { BrandLogo, PENDING_EVENT, ThemeToggle, cn, useCleanPath } from "./ui";
+import { BrandLogo, ModalPortal, PENDING_EVENT, ThemeToggle, cn, useCleanPath } from "./ui";
 import { APP_VERSION } from "../version";
 
 // ONE flat array: the role filter, the breadcrumb labels and the command
@@ -36,6 +37,9 @@ const COLLAPSE_KEY = "itrack-rail-collapsed";
 // Set once an approver has been landed on their approvals this sign-in;
 // cleared by AuthProvider.signOut so the next sign-in lands them again.
 export const APPROVER_LANDED_KEY = "itrack-approver-landed";
+// Set once an admin has seen the briefing this sign-in; cleared by
+// AuthProvider.signOut, so it shows again only at the next sign-in.
+export const BRIEFED_KEY = "itrack-briefed";
 
 function SidebarContent({ items, path, collapsed, onToggleCollapse, badges = {} }) {
   return (
@@ -176,6 +180,82 @@ function CommandPalette({ open, onClose, items, isAdmin }) {
   );
 }
 
+function AlertList({ alerts, onPick }) {
+  return (
+    <ul className="divide-y divide-border">
+      {alerts.map((a) => (
+        <li key={a.id}>
+          <Link href={a.href} onClick={onPick} className="flex gap-2 rounded-lg px-2 py-2.5 text-sm hover:bg-sunken">
+            <span className={cn("mt-1.5 h-2 w-2 shrink-0 rounded-full bg-current", ALERT_TONES[a.tone])} />
+            <span>
+              <span className="block">{a.title}</span>
+              {a.detail && <span className="block text-xs text-muted">{a.detail}</span>}
+            </span>
+          </Link>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+// The bell and the admin briefing read the SAME loadAlerts() result, so they
+// cannot disagree. Refreshed on every page change, which is "live" enough for
+// warranties measured in days.
+function AlertBell({ path }) {
+  const { isAdmin, isApprover } = useAuth();
+  const [alerts, setAlerts] = useState(null);
+  const [open, setOpen] = useState(false);
+  const [briefing, setBriefing] = useState(false);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    let live = true;
+    loadAlerts({ isApprover }).then((a) => {
+      if (!live) return;
+      setAlerts(a);
+      if (!isAdmin || !a.length) return; // never shown when there is nothing to report
+      let seen = true;
+      try { seen = !!sessionStorage.getItem(BRIEFED_KEY); sessionStorage.setItem(BRIEFED_KEY, "1"); } catch { /* private mode */ }
+      if (!seen) setBriefing(true);
+    }, () => live && setAlerts([]));
+    return () => { live = false; };
+  }, [path, isAdmin, isApprover]);
+
+  useEffect(() => {
+    if (!open) return;
+    const close = (e) => !ref.current?.contains(e.target) && setOpen(false);
+    document.addEventListener("mousedown", close);
+    return () => document.removeEventListener("mousedown", close);
+  }, [open]);
+
+  const n = alerts?.length || 0;
+  return (
+    <div className="relative" ref={ref}>
+      <button onClick={() => setOpen((o) => !o)} aria-label={n ? `Notifications: ${n}` : "Notifications"} aria-expanded={open}
+        className="relative rounded-lg p-2 text-muted hover:bg-sunken hover:text-fg">
+        <Bell className="h-5 w-5" />
+        {n > 0 && <span className="absolute right-1 top-1 rounded-full bg-danger px-1 text-[10px] font-semibold leading-4 text-white">{n}</span>}
+      </button>
+      {open && (
+        <div className="absolute right-0 top-11 z-50 w-80 rounded-xl border border-border bg-surface p-2 shadow-lg">
+          <p className="px-2 py-1 text-xs font-semibold uppercase tracking-wider text-muted">Needs attention</p>
+          {alerts === null ? <p className="px-2 py-3 text-sm text-muted">Loading…</p>
+            : n === 0 ? <p className="px-2 py-3 text-sm text-muted">Nothing needs attention.</p>
+            : <AlertList alerts={alerts} onPick={() => setOpen(false)} />}
+        </div>
+      )}
+      <ModalPortal open={briefing} onClose={() => setBriefing(false)} labelledBy="briefing-title">
+        <h2 id="briefing-title" className="text-lg font-semibold">Since you were last here</h2>
+        <p className="mb-3 mt-1 text-sm text-muted">Shown once per sign-in. The bell keeps the same list.</p>
+        <AlertList alerts={alerts || []} onPick={() => setBriefing(false)} />
+        <div className="mt-4 flex justify-end">
+          <button onClick={() => setBriefing(false)} className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-brand-fg">OK</button>
+        </div>
+      </ModalPortal>
+    </div>
+  );
+}
+
 function UserMenu() {
   const { idNumber, fullName, role, signOut } = useAuth();
   const [open, setOpen] = useState(false);
@@ -301,6 +381,7 @@ export default function AppShell({ children }) {
               <kbd className="hidden rounded border border-border px-1 text-[10px] sm:inline">Ctrl K</kbd>
             </button>
             <ThemeToggle />
+            <AlertBell path={path} />
             <UserMenu />
           </div>
         </header>
