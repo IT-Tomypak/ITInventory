@@ -96,6 +96,32 @@ r = await as("officer", "select category from audit_feed"); ok(r.rows.length > 0
 r = await as("admin", "select count(distinct category)::int n from audit_feed"); ok(r.rows[0].n === 2, "admin audit_feed has both");
 await as("officer", "delete from assets where asset_id=1");
 r = await as("admin", "select count(*)::int n from asset_audit where asset_id=1"); ok(r.rows[0].n > 5, "audit survives asset delete");
+
+// ---- allocation (phase 4)
+r = await as("admin", "insert into assets(asset_tag, asset_type, purchase_date, refresh_years) values ('IT-0100','Laptop', current_date - 365, 4) returning asset_id");
+const a100 = r.rows[0].asset_id;
+await as("admin", `insert into asset_value values (${a100}, 4000)`);
+await refused(() => as("viewer", `select allocate_asset(null, ${a100}, 2)`), "viewer allocate");
+await refused(() => as("officer", `select allocate_asset(null, ${a100})`), "allocate with no holder");
+r = await as("officer", `select allocate_asset(1, ${a100}, 2, null, current_date, null, 'New', 'with charger') as id`);
+const asg = r.rows[0].id;
+r = await as("officer", `select (select status from assets where asset_id=${a100}) s, (select status from equipment_request where request_id=1) rs, (select asset_id from equipment_request where request_id=1) ra`);
+ok(r.rows[0].s === "Assigned" && r.rows[0].rs === "Allocated" && r.rows[0].ra === a100, "allocate: asset Assigned, request Allocated " + JSON.stringify(r.rows[0]));
+await refused(() => as("officer", `select allocate_asset(null, ${a100}, 1)`), "second allocation of same asset");
+await refused(() => as("officer", `select allocate_asset(1, ${a100}, 1)`), "allocate against an Allocated request");
+r = await as("admin", `select cost_rm::float c, book_value_rm::float b from assignment_value where assignment_id=${asg}`);
+ok(r.rows[0].c === 4000 && Math.abs(r.rows[0].b - 3000) < 5, "value snapshot at issue " + JSON.stringify(r.rows[0]));
+r = await as("officer", "select * from assignment_value"); ok(r.rows.length === 0, "officer cannot read value snapshot");
+await as("admin", `update asset_value set purchase_cost_rm = 9999 where asset_id=${a100}`);
+r = await as("admin", `select cost_rm::float c from assignment_value where assignment_id=${asg}`); ok(r.rows[0].c === 4000, "snapshot unchanged after cost correction");
+await refused(() => as("viewer", `select return_asset(${a100})`), "viewer return");
+await refused(() => as("officer", `select return_asset(${a100}, current_date, 'Good', null, 'Retired')`), "return straight to Retired");
+await as("officer", `select return_asset(${a100}, current_date, 'Damaged', 'cracked screen', 'In repair')`);
+r = await as("officer", `select status from assets where asset_id=${a100}`); ok(r.rows[0].status === "In repair", "return -> In repair");
+await refused(() => as("officer", `select return_asset(${a100})`), "return an asset nobody holds");
+await as("officer", `update assets set status='In stock' where asset_id=${a100}`);
+await as("officer", `select allocate_asset(null, ${a100}, null, 1, current_date, current_date + 14)`);
+r = await as("officer", `select status from assets where asset_id=${a100}`); ok(r.rows[0].status === "Loaned", "allocate with due-back -> Loaned (to a location)");
 await db.query("reset role"); await db.query("set role anon");
 await refused(() => db.query("select * from assets"), "anon reads assets");
 await refused(() => db.query("select public.log_login()"), "anon executes functions");

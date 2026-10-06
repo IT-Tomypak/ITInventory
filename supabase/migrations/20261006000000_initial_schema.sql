@@ -1,4 +1,4 @@
--- 20261006_initial_schema.sql
+-- 20261006000000_initial_schema.sql
 --
 -- WHY: ITrack's first schema. RLS is the access control for this system: the
 -- static site ships only the anon key, which is itself a valid JWT, and

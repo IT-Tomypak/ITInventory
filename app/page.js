@@ -3,7 +3,7 @@
 // Live from the database on every visit, no cached copy.
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
-  AlertTriangle, Archive, CheckCircle2, ChevronDown, ChevronRight, Download, Filter, Package,
+  AlertTriangle, Archive, ArrowLeftRight, CheckCircle2, ChevronDown, ChevronRight, Download, Filter, Package,
   Pencil, Plus, Search, Timer, UserCheck, Wallet, Wrench, X,
 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
@@ -25,6 +25,10 @@ const STATUS_KPIS = [
   { status: "Retired", icon: Archive, tone: "muted" },
   { status: "Lost/Stolen", icon: AlertTriangle, tone: "danger" },
 ];
+// Shortcut to /allocate for assets that can move: in stock (check out) or held (check in).
+const custodyHref = (r) => (r.holder || (r.status === "In stock" && r.active) ? `/allocate/?asset=${r.asset_id}` : null);
+const custodyLabel = (r) => (r.holder ? "Check in" : "Check out");
+
 const EMPTY_FILTERS = { q: "", type: "", status: "", department: "", location: "", warranty: "", from: "", to: "" };
 
 export default function RegisterPage() {
@@ -306,6 +310,12 @@ export default function RegisterPage() {
                                   aria-label={`${open ? "Collapse" : "Expand"} ${r.asset_tag}`} className="rounded-lg p-1.5 text-muted hover:bg-border/50 hover:text-fg">
                                   {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                                 </button>
+                                {!isViewer && custodyHref(r) && (
+                                  <a href={custodyHref(r)} aria-label={`${custodyLabel(r)} ${r.asset_tag}`} title={custodyLabel(r)}
+                                    className="rounded-lg p-1.5 text-muted hover:bg-border/50 hover:text-fg">
+                                    <ArrowLeftRight className="h-4 w-4" />
+                                  </a>
+                                )}
                                 {!isViewer && (
                                   <button onClick={() => setModal({ mode: "edit", asset: r })} aria-label={`Edit ${r.asset_tag}`}
                                     className="rounded-lg p-1.5 text-muted hover:bg-border/50 hover:text-fg">
@@ -343,6 +353,11 @@ export default function RegisterPage() {
             <div className="mb-4 flex items-center justify-between gap-2">
               <h2 id="asset-detail-title" className="text-lg font-semibold">{modal.asset.asset_tag}</h2>
               <div className="flex gap-2">
+                {!isViewer && custodyHref(modal.asset) && (
+                  <a href={custodyHref(modal.asset)} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-2 text-sm">
+                    <ArrowLeftRight className="h-4 w-4" /> {custodyLabel(modal.asset)}
+                  </a>
+                )}
                 {!isViewer && (
                   <button onClick={() => setModal({ mode: "edit", asset: modal.asset })}
                     className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-2 text-sm font-medium text-brand-fg">
