@@ -75,7 +75,7 @@ begin
 
   -- 3. Only stock can be issued, and the message says why not.
   if a.status <> 'In stock' then
-    raise exception 'Asset % is % — only In stock assets can be issued.', a.asset_tag, a.status using errcode = 'P0001';
+    raise exception 'Asset % is % - only In stock assets can be issued.', a.asset_tag, a.status using errcode = 'P0001';
   end if;
   if not a.active then
     raise exception 'Asset % is marked inactive.', a.asset_tag using errcode = 'P0001';
