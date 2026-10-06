@@ -230,7 +230,7 @@ function NotifyHealth() {
           {h.recent.map((f, i) => <li key={i}>{f.created_at.slice(0, 16).replace("T", " ")} · {PURPOSE_LABELS[f.purpose] || f.purpose} · {f.error}</li>)}
         </ul>
       )}
-      <p className="mt-2 text-xs text-muted">This counts what the provider accepted, not what was delivered. Delivery status is in the Resend dashboard.</p>
+      <p className="mt-2 text-xs text-muted">This counts what the provider accepted, not what was delivered. Delivery status is in Exchange message trace (Microsoft 365 admin centre).</p>
     </Card>
   );
 }
