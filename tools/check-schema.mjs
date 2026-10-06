@@ -122,6 +122,36 @@ await refused(() => as("officer", `select return_asset(${a100})`), "return an as
 await as("officer", `update assets set status='In stock' where asset_id=${a100}`);
 await as("officer", `select allocate_asset(null, ${a100}, null, 1, current_date, current_date + 14)`);
 r = await as("officer", `select status from assets where asset_id=${a100}`); ok(r.rows[0].status === "Loaned", "allocate with due-back -> Loaned (to a location)");
+// ---- public request form (phase 5)
+async function asAnon(sql, params) {
+  await db.query("reset role");
+  await db.query("select set_config('request.jwt.claims', $1, false)", [JSON.stringify({ role: "anon" })]);
+  await db.query("select set_config('request.headers', $1, false)", [JSON.stringify({ "x-forwarded-for": "203.0.113.9, 10.0.0.1" })]);
+  await db.query("set role anon");
+  try { return await db.query(sql, params); } finally { await db.query("reset role"); }
+}
+const submit = (name, extra = {}) => asAnon("select submit_equipment_request($1,$2,$3,$4,$5,$6) as r",
+  [name, extra.dept ?? "QA", extra.type ?? "Laptop", "need one", extra.urgency ?? "Normal", extra.photo ?? null]).then((x) => x.rows[0].r);
+const photo = "https://abc.supabase.co/storage/v1/object/public/attachments/requests/1-x.jpg";
+r = await submit("Siti", { photo: photo + "\n" + photo });
+ok(r.ok && r.request_id > 0, "anon submits a request " + JSON.stringify(r));
+r = await as("admin", `select requested_by_name, created_by_name, status, attachment_path from equipment_request where request_id=${r.request_id}`);
+ok(r.rows[0].created_by_name === "Public form" && r.rows[0].status === "Requested" && r.rows[0].attachment_path.split("\n").length === 2, "public request stamped 'Public form' " + JSON.stringify(r.rows[0]));
+r = await submit("Siti", { type: "Toaster" }); ok(!r.ok && r.reason === "invalid_asset_type", "invalid type refused");
+r = await submit("Siti", { photo: "https://evil.example/x.jpg" }); ok(!r.ok && r.reason === "invalid_attachment", "foreign attachment URL refused");
+for (let i = 0; i < 4; i++) await submit("SITI ");
+r = await submit("siti"); ok(!r.ok && r.reason === "rate_limited_name", "6th request by same name in an hour refused (case/space-insensitive)");
+r = await as("admin", "select count(*) filter (where accepted)::int a, count(*) filter (where not accepted)::int n, min(ip) ip from request_submission_log");
+ok(r.rows[0].a === 5 && r.rows[0].n === 3 && r.rows[0].ip === "203.0.113.9", "every attempt logged incl. refusals, first forwarded IP " + JSON.stringify(r.rows[0]));
+for (let i = 0; i < 35; i++) await submit("Person " + i);
+r = await submit("Somebody new"); ok(!r.ok && r.reason === "rate_limited_overall", "41st request in an hour refused overall");
+r = await asAnon("select * from check_request_status(1)");
+ok(r.rows.length === 1 && !("requested_by_name" in r.rows[0]) && !("approval_note" in r.rows[0]) && r.rows[0].allocated === true, "anon status lookup returns bland fields only " + Object.keys(r.rows[0]));
+await refused(() => asAnon("select * from equipment_request"), "anon reads equipment_request");
+await refused(() => asAnon("select * from request_submission_log"), "anon reads submission log");
+await refused(() => asAnon("select allocate_asset(null, 1, 1)"), "anon allocates");
+r = await as("officer", "select count(*)::int n from request_submission_log"); ok(r.rows[0].n === 0, "officer cannot read submission log");
+
 await db.query("reset role"); await db.query("set role anon");
 await refused(() => db.query("select * from assets"), "anon reads assets");
 await refused(() => db.query("select public.log_login()"), "anon executes functions");

@@ -20,6 +20,10 @@ export function useCleanPath() {
   return (usePathname() || "/").replace(/\/+$/, "") || "/";
 }
 
+// Fired after a release decision so AppShell refreshes the approver's nav badge
+// without waiting for a page change.
+export const PENDING_EVENT = "itrack:pending-changed";
+
 // ---------------------------------------------------------------- toasts
 // A custom-event bus: no library, callable from anywhere, including non-React code.
 const TOAST_EVENT = "itrack:toast";

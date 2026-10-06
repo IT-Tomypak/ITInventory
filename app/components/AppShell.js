@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { supabase } from "../../lib/supabaseClient";
 import { PUBLIC_ROUTES, useAuth } from "./AuthProvider";
-import { BrandLogo, ThemeToggle, cn, useCleanPath } from "./ui";
+import { BrandLogo, PENDING_EVENT, ThemeToggle, cn, useCleanPath } from "./ui";
 import { APP_VERSION } from "../version";
 
 // ONE flat array: the role filter, the breadcrumb labels and the command
@@ -33,8 +33,11 @@ const ROLE_LABELS = {
   viewer: "Viewer (read only)",
 };
 const COLLAPSE_KEY = "itrack-rail-collapsed";
+// Set once an approver has been landed on their approvals this sign-in;
+// cleared by AuthProvider.signOut so the next sign-in lands them again.
+export const APPROVER_LANDED_KEY = "itrack-approver-landed";
 
-function SidebarContent({ items, path, collapsed, onToggleCollapse }) {
+function SidebarContent({ items, path, collapsed, onToggleCollapse, badges = {} }) {
   return (
     <div className="flex h-full flex-col">
       <div className={cn("flex h-14 items-center border-b border-border px-4", collapsed && "justify-center px-0")}>
@@ -57,8 +60,16 @@ function SidebarContent({ items, path, collapsed, onToggleCollapse }) {
                 className={cn("flex items-center gap-3 rounded-xl px-3 py-2 text-sm",
                   collapsed && "justify-center px-0",
                   active ? "bg-brand/10 font-medium text-brand" : "text-muted hover:bg-sunken hover:text-fg")}>
-                <Icon className="h-5 w-5 shrink-0" />
+                <span className="relative">
+                  <Icon className="h-5 w-5 shrink-0" />
+                  {collapsed && badges[item.href] > 0 && <span className="absolute -right-1 -top-1 h-2.5 w-2.5 rounded-full bg-warn" />}
+                </span>
                 {!collapsed && <span className="truncate">{item.label}</span>}
+                {!collapsed && badges[item.href] > 0 && (
+                  <span className="ml-auto rounded-full bg-warn px-1.5 text-xs font-semibold text-white" aria-label={`${badges[item.href]} waiting`}>
+                    {badges[item.href]}
+                  </span>
+                )}
               </Link>
             </div>
           );
@@ -200,8 +211,10 @@ function UserMenu() {
 
 export default function AppShell({ children }) {
   const path = useCleanPath();
-  const { isAdmin } = useAuth();
+  const router = useRouter();
+  const { isAdmin, isApprover } = useAuth();
   const [collapsed, setCollapsed] = useState(false);
+  const [pending, setPending] = useState(0);
   const [drawer, setDrawer] = useState(false);
   const [palette, setPalette] = useState(false);
 
@@ -220,6 +233,25 @@ export default function AppShell({ children }) {
 
   useEffect(() => setDrawer(false), [path]);
 
+  // Approvers: count releases waiting for a decision (nav badge), and on the
+  // first page of a sign-in, land them on the approvals view if any wait.
+  useEffect(() => {
+    if (!isApprover || PUBLIC_ROUTES.includes(path)) return;
+    let live = true;
+    const refresh = () => supabase.from("equipment_request").select("request_id", { count: "exact", head: true })
+      .eq("release_status", "Pending").then(({ count }) => {
+        if (!live) return;
+        setPending(count || 0);
+        let landed = true;
+        try { landed = !!sessionStorage.getItem(APPROVER_LANDED_KEY); sessionStorage.setItem(APPROVER_LANDED_KEY, "1"); } catch { /* private mode */ }
+        if (!landed && count > 0 && path === "/") router.replace("/entry/?view=approvals");
+      });
+    refresh();
+    window.addEventListener(PENDING_EVENT, refresh);
+    return () => { live = false; window.removeEventListener(PENDING_EVENT, refresh); };
+  }, [isApprover, path, router]);
+  const badges = { "/entry": pending };
+
   useEffect(() => {
     const onKey = (e) => {
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") { e.preventDefault(); setPalette((p) => !p); }
@@ -235,7 +267,7 @@ export default function AppShell({ children }) {
     <div className="min-h-screen">
       <aside className={cn("no-print fixed inset-y-0 left-0 z-30 hidden border-r border-border bg-surface transition-[width] md:flex md:flex-col",
         collapsed ? "w-[4.5rem]" : "w-60")}>
-        <SidebarContent items={items} path={path} collapsed={collapsed} onToggleCollapse={toggleCollapse} />
+        <SidebarContent items={items} path={path} collapsed={collapsed} onToggleCollapse={toggleCollapse} badges={badges} />
       </aside>
 
       {drawer && (
@@ -245,7 +277,7 @@ export default function AppShell({ children }) {
             <button onClick={() => setDrawer(false)} aria-label="Close menu" className="absolute right-2 top-3 rounded-lg p-2 text-muted">
               <X className="h-5 w-5" />
             </button>
-            <SidebarContent items={items} path={path} collapsed={false} />
+            <SidebarContent items={items} path={path} collapsed={false} badges={badges} />
           </aside>
         </div>
       )}

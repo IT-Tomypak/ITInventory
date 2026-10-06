@@ -130,3 +130,22 @@ export function SetPasswordScreen() {
     </Frame>
   );
 }
+
+// Frame for the public, no-login pages (/request, /status). Like the login
+// screens they live outside AppShell, so they carry their own theme toggle.
+export function PublicPage({ title, subtitle, children }) {
+  return (
+    <main className="min-h-screen px-4 pb-10" style={{ paddingTop: "max(1rem, env(safe-area-inset-top))" }}>
+      <header className="mx-auto flex max-w-2xl items-center justify-between py-2">
+        <a href="/" aria-label="ITrack home"><BrandLogo size={32} withText /></a>
+        <ThemeToggle />
+      </header>
+      <div className="mx-auto mt-4 max-w-2xl">
+        {title && <h1 className="text-2xl font-semibold tracking-tight">{title}</h1>}
+        {subtitle && <p className="mt-1 text-sm text-muted">{subtitle}</p>}
+        <div className="mt-5">{children}</div>
+        <p className="mt-10 text-center text-xs text-muted">ITrack v{APP_VERSION} · Tomypak Flexible Packaging Sdn Bhd</p>
+      </div>
+    </main>
+  );
+}
