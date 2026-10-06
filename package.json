@@ -1,0 +1,31 @@
+{
+  "name": "itrack",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "prebuild": "node -e \"require('fs').rmSync('out',{recursive:true,force:true})\" && node tools/build-help.mjs",
+    "build": "next build",
+    "package": "node tools/make-zip.mjs",
+    "start": "next start"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.45.0",
+    "clsx": "^2.1.1",
+    "framer-motion": "^11.3.0",
+    "lucide-react": "^0.424.0",
+    "next": "14.2.5",
+    "papaparse": "^5.4.1",
+    "react": "18.3.1",
+    "react-dom": "18.3.1",
+    "recharts": "^2.12.7",
+    "tailwind-merge": "^2.4.0"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "^0.3.0",
+    "autoprefixer": "^10.4.19",
+    "playwright": "^1.45.0",
+    "postcss": "^8.4.40",
+    "tailwindcss": "^3.4.7"
+  }
+}

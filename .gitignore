@@ -1,0 +1,7 @@
+node_modules/
+.next/
+out/
+.env.local
+*.zip
+tools/shots/
+tools/.notify-backup.json
