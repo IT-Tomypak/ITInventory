@@ -1,5 +1,5 @@
-// notify — every message the database asks for, sent through Microsoft Graph
-// from the company's own Microsoft 365 mailbox, plus the receipt archive.
+// notify — every message the database asks for, sent through Resend (API key
+// in Vault) from the company's verified domain, plus the receipt archive.
 //
 // Called ONLY by the database (public.notify_post, via pg_net), never by a
 // browser. verify_jwt must be OFF for this function: the caller has no user
@@ -14,7 +14,7 @@
 //
 // Always HTTP 200 (with { ok, ... }) except 405 / 401. The caller is a trigger
 // that swallows errors anyway; half-working mail is worse than unrecorded mail.
-// There is no dedupe and no retry: one trigger fire is one Graph call.
+// There is no dedupe and no retry: one trigger fire is one Resend call.
 //
 // Config comes from Vault through get_notify_config() at call time. The only
 // env vars are the two Supabase injects.
@@ -38,47 +38,32 @@ type Any = any;
 type Cfg = Record<string, string>;
 type Sent = { ok: boolean; status: number; text: string; providerId: string | null };
 
-// ---------------------------------------------------------------- Graph ----
-// Client-credentials token, then POST /users/{mailbox}/sendMail. The app
-// registration should be limited to the one mailbox by an Exchange
-// application access policy (EMAIL_PIPELINE.md), or Mail.Send lets it send as anyone.
-async function graphSend(cfg: Cfg, to: string[], subject: string, html: string, refId: string): Promise<Sent> {
+// --------------------------------------------------------------- Resend ----
+// POST https://api.resend.com/emails with the API key from Vault. The sender
+// (notify_from, e.g. "ITrack <helpdesk@tomypak.com.my>") must be on a domain
+// verified in Resend, or every send is refused with 403.
+async function resendSend(cfg: Cfg, to: string[], subject: string, html: string, refId: string): Promise<Sent> {
+  if (!cfg.notify_resend_api_key) return { ok: false, status: 0, text: "notify_resend_api_key is not set in Vault", providerId: null };
   try {
-    const tok = await fetch(`https://login.microsoftonline.com/${cfg.notify_graph_tenant_id}/oauth2/v2.0/token`, {
+    const res = await fetch("https://api.resend.com/emails", {
       method: "POST",
-      body: new URLSearchParams({
-        client_id: cfg.notify_graph_client_id, client_secret: cfg.notify_graph_client_secret,
-        scope: "https://graph.microsoft.com/.default", grant_type: "client_credentials",
-      }),
-    });
-    if (!tok.ok) return { ok: false, status: tok.status, text: `token: ${await tok.text()}`, providerId: null };
-    const { access_token } = await tok.json();
-    const res = await fetch(`https://graph.microsoft.com/v1.0/users/${encodeURIComponent(cfg.notify_from)}/sendMail`, {
-      method: "POST",
-      headers: { Authorization: `Bearer ${access_token}`, "Content-Type": "application/json" },
+      headers: { Authorization: `Bearer ${cfg.notify_resend_api_key}`, "Content-Type": "application/json" },
       body: JSON.stringify({
-        message: {
-          subject,
-          body: { contentType: "HTML", content: html },
-          toRecipients: to.map((address) => ({ emailAddress: { address } })),
-          internetMessageHeaders: [
-            { name: "X-ITrack-Notify", value: NOTIFY_HEADER },
-            { name: "X-Entity-Ref-ID", value: refId }, // thread-collapse hint
-          ],
-        },
-        saveToSentItems: false,
+        from: cfg.notify_from, to, subject, html,
+        headers: { "X-ITrack-Notify": NOTIFY_HEADER, "X-Entity-Ref-ID": refId }, // thread-collapse hint
       }),
     });
-    // 202 with an empty body on success. Graph's request-id is what Microsoft
-    // support asks for, so it stands in for a message id.
-    return { ok: res.ok, status: res.status, text: await res.text(), providerId: res.headers.get("request-id") };
+    const text = await res.text();
+    let id: string | null = null;
+    try { id = JSON.parse(text).id ?? null; } catch { /* error bodies are still JSON, but never trust it */ }
+    return { ok: res.ok, status: res.status, text, providerId: id };
   } catch (e) {
     return { ok: false, status: 0, text: String(e), providerId: null };
   }
 }
 
-// Records what Graph ACCEPTED, not what was delivered: accepted-then-
-// quarantined happens, and delivery is only visible in Exchange message trace.
+// Records what Resend ACCEPTED, not what was delivered: accepted-then-
+// bounced happens, and delivery is visible in the Resend dashboard (Emails / Logs).
 async function logSend(purpose: string, recipients: string[], subject: string, r: Sent) {
   try {
     await supabase.from("notify_log").insert({
@@ -91,7 +76,7 @@ async function logSend(purpose: string, recipients: string[], subject: string, r
 // The subject is passed in ONCE and used for both the send and the log, so the
 // log cannot drift from what was sent.
 async function send(cfg: Cfg, purpose: string, to: string[], subject: string, html: string, refId: string) {
-  const r = await graphSend(cfg, to, subject, html, refId);
+  const r = await resendSend(cfg, to, subject, html, refId);
   await logSend(purpose, to, subject, r);
   return json({ ok: r.ok, status: r.status, result: r.text.slice(0, 500) });
 }

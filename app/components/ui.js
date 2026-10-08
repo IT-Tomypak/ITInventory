@@ -149,6 +149,8 @@ const STATUS_TONE = {
   "In stock": "ok", Assigned: "info", "In repair": "warn", Loaned: "brand", Retired: "muted", "Lost/Stolen": "danger",
   Requested: "info", Approved: "ok", Allocated: "brand", Delivered: "ok", Rejected: "danger", Cancelled: "muted",
   Pending: "warn",
+  // IT Hardware (assets.hw_status)
+  Registered: "brand", Active: "info", Handover: "warn", Repair: "warn", Vacant: "ok",
 };
 export function StatusBadge({ status }) {
   if (!status) return null;

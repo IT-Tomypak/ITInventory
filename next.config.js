@@ -8,4 +8,7 @@ module.exports = {
   // trailing slash. Normalise reads with (usePathname() || "/").replace(/\/+$/, "") || "/".
   trailingSlash: true,
   images: { unoptimized: true },
+  // A release build can use its own folder (NEXT_DIST_DIR=.next-build) so it
+  // never overwrites the .next a running `next dev` is serving from.
+  distDir: process.env.NEXT_DIST_DIR || ".next",
 };

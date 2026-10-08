@@ -4,19 +4,23 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle, Archive, ArrowLeftRight, CheckCircle2, ChevronDown, ChevronRight, Download, Filter, Package,
-  Pencil, Plus, Search, Timer, UserCheck, Wallet, Wrench, X,
+  FileUp, Pencil, Plus, Search, Tags, Timer, UserCheck, Wallet, Wrench, X,
 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
-import { ASSET_TYPES, ASSET_STATUSES, MANUAL_STATUSES, WARRANTY_STATES, fmtDate, loadRegister } from "../lib/assets";
+import { HW_STATUSES, LISTS, ASSET_STATUSES, MANUAL_STATUSES, WARRANTY_STATES, fmtDate, fmtRM, loadRegister } from "../lib/assets";
 import { downloadCsv } from "../lib/csv";
+import { downloadXlsx } from "../lib/xlsx";
 import { useAuth } from "./components/AuthProvider";
 import AssetDetail from "./components/AssetDetail";
 import AssetForm, { inputCls } from "./components/AssetForm";
+import HardwareForm from "./components/HardwareForm";
+import HardwareImport from "./components/HardwareImport";
 import {
   Card, EmptyState, HoldToConfirmButton, KpiCard, KpiSkeleton, ModalPortal, PageHeader, Pagination,
   SortableTh, StatusBadge, TableSkeleton, cn, toast,
 } from "./components/ui";
 
+const LIST_ROUTES = { inventory: "inventory", accessory: "accessories", fixed: "fixed-assets" };
 const STATUS_KPIS = [
   { status: "In stock", icon: CheckCircle2, tone: "ok" },
   { status: "Assigned", icon: UserCheck, tone: "info" },
@@ -25,16 +29,61 @@ const STATUS_KPIS = [
   { status: "Retired", icon: Archive, tone: "muted" },
   { status: "Lost/Stolen", icon: AlertTriangle, tone: "danger" },
 ];
+// The two listings are a plain inventory view: no write-off counts, no money.
+const LISTING_KPIS = STATUS_KPIS.filter((s) => !["Retired", "Lost/Stolen"].includes(s.status));
+// IT Hardware counts its own status words (assets.hw_status), not custody status.
+const HW_KPIS = [
+  { status: "Registered", icon: Package, tone: "brand" },
+  { status: "Active", icon: UserCheck, tone: "info" },
+  { status: "Handover", icon: ArrowLeftRight, tone: "warn" },
+  { status: "Repair", icon: Wrench, tone: "warn" },
+  { status: "Vacant", icon: CheckCircle2, tone: "ok" },
+];
+// IT Hardware columns: IT's hardware sheet header, verbatim and in order, so
+// an Excel export can be edited and imported back. [label, field, cell?].
+const HW_COLUMNS = [
+  ["Names", "series"], ["Device_name", "asset_tag"], ["Status", "hw_status", (r) => <StatusBadge status={r.hw_status} />],
+  ["Workgroup", "workgroup"], ["Remarks", "remark"], ["Device_type", "asset_type"],
+  ["Employee_name", "holder"], ["Employee_id", "holder_emp_no"], ["Previous_users", "previous_user"], ["Plant", "plant"], ["Location", "item_location"],
+  ["Department", "department"], ["Designation", "holder_designation"],
+  ["Purchased_year", "purchase_date", (r) => r.purchase_date && fmtDate(r.purchase_date)],
+  ["Handover_date", "holder_since", (r) => r.holder_since && fmtDate(r.holder_since)],
+  ["Mac_address", "mac_address"], ["Brand", "make"], ["Model", "model"], ["Serial_number", "serial_no"], ["OS", "os"],
+  ["M365_license", "m365_license"], ["Office_productkey", "office_product_key"], ["RAM", "ram"], ["HDD_capacity", "storage"],
+  ["Anydesk_id", "anydesk_id"], ["Special_app", "special_app"], ["App_licenses", "app_licenses"],
+  ["Batch_number", "batch_number"], ["Vendor_name", "vendor"], ["__PowerAppsId__", "powerapps_id"],
+];
+// IT Fixed Assets: Finance's fixed-asset register (FAR) headers. Cost is
+// admin-only (RLS), so its column is added for admins only.
+const FA_COLUMNS = [
+  ["F/A Code", "asset_tag"], ["Category", "asset_type"], ["F/A Description", "model"], ["Suppliers", "vendor"],
+  ["Cost Ctr. 1", "plant"], ["Cost Ctr. 2", "department"], ["Location", "item_location"],
+  ["Acquisition Date", "purchase_date", (r) => r.purchase_date && fmtDate(r.purchase_date)],
+  ["Quantity", "quantity"], ["Purchase Order", "po_no"], ["Invoice No.", "invoice_no"], ["Remarks", "remark"],
+];
+const FA_COST = ["Cost c/f", "purchase_cost_rm", (r) => r.purchase_cost_rm != null && fmtRM(r.purchase_cost_rm)];
+const KPI_GRID = { 4: "sm:grid-cols-4", 5: "sm:grid-cols-3 xl:grid-cols-5", 6: "sm:grid-cols-3 xl:grid-cols-6", 7: "sm:grid-cols-3 xl:grid-cols-7" };
 // Shortcut to /allocate for assets that can move: in stock (check out) or held (check in).
 const custodyHref = (r) => (r.holder || (r.status === "In stock" && r.active) ? `/allocate/?asset=${r.asset_id}` : null);
 const custodyLabel = (r) => (r.holder ? "Check in" : "Check out");
 
 const EMPTY_FILTERS = { q: "", type: "", status: "", department: "", location: "", warranty: "", from: "", to: "" };
 
-export default function RegisterPage() {
+// `list` ("inventory" | "accessory") narrows the page to one listing; unset = every asset.
+// On the full register (no `list`) two buttons switch between the listings.
+const REGISTER_VIEWS = [["inventory", "Hardware"], ["accessory", LISTS.accessory], ["fixed", LISTS.fixed]];
+
+export default function RegisterPage({ list }) {
   // isViewer/isAdmin only decide what is RENDERED. RLS refuses a viewer's
   // write and hides cost from non-admins whatever this page does.
   const { isViewer, isAdmin } = useAuth();
+  const [view, setView] = useState("inventory");
+  const cur = list || view;
+  const hw = cur === "inventory";
+  const statusOf = (r) => (hw ? r.hw_status : r.status);
+  const fx = cur === "fixed";
+  // Sheet-shaped listings get their own columns, an Excel export and a pop-up detail.
+  const columns = hw ? HW_COLUMNS : fx ? [...FA_COLUMNS, ...(isAdmin ? [FA_COST] : [])] : null;
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [filters, setFilters] = useState(EMPTY_FILTERS);
@@ -64,26 +113,38 @@ export default function RegisterPage() {
     const q = new URLSearchParams(window.location.search).get("q");
     if (q) setFilters((f) => ({ ...f, q }));
   }, []);
+  // ...&open=1 (a scan that found the serial in another listing): open its detail once.
+  useEffect(() => {
+    const p = new URLSearchParams(window.location.search);
+    if (!data || !p.get("open")) return;
+    const r = data.rows.find((a) => a.asset_tag === p.get("q"));
+    if (r) setModal({ mode: "detail", asset: r });
+    p.delete("open");
+    window.history.replaceState(null, "", `?${p}`);
+  }, [data]);
 
   const setFilter = (k, v) => { setFilters((f) => ({ ...f, [k]: v })); setPage(1); };
   const activeFilterCount = Object.entries(filters).filter(([k, v]) => k !== "q" && v).length;
 
+  const rows = useMemo(() => (data ? data.rows.filter((r) => r.list === cur) : []), [data, cur]);
+  const categories = useMemo(
+    () => (data?.lookups.categories ?? []).filter((c) => c.list === cur).map((c) => c.name), [data, cur]);
   const departments = useMemo(
-    () => [...new Set((data?.rows ?? []).map((r) => r.department).filter(Boolean))].sort(), [data]);
+    () => [...new Set(rows.map((r) => r.department).filter(Boolean))].sort(), [rows]);
 
   const filtered = useMemo(() => {
-    if (!data) return [];
     const q = filters.q.trim().toLowerCase();
-    return data.rows.filter((r) =>
-      (!q || [r.asset_tag, r.serial_no, r.make, r.model, r.holder].some((v) => v?.toLowerCase().includes(q)))
+    return rows.filter((r) =>
+      (!q || [r.asset_tag, r.serial_no, r.make, r.model, r.holder, r.holder_emp_no, r.mac_address, r.anydesk_id, r.remark, r.item_location]
+        .some((v) => v?.toLowerCase().includes(q)))
       && (!filters.type || r.asset_type === filters.type)
-      && (!filters.status || r.status === filters.status)
+      && (!filters.status || (hw ? r.hw_status : r.status) === filters.status)
       && (!filters.department || r.department === filters.department)
       && (!filters.location || String(r.location_id) === filters.location)
       && (!filters.warranty || r.warranty === filters.warranty)
       && (!filters.from || (r.purchase_date && r.purchase_date >= filters.from))
       && (!filters.to || (r.purchase_date && r.purchase_date <= filters.to)));
-  }, [data, filters]);
+  }, [rows, filters, hw]);
 
   const sorted = useMemo(() => {
     const { field, dir } = sort;
@@ -106,8 +167,16 @@ export default function RegisterPage() {
   // is a bug users do not report — they just stop trusting the button.
   function exportCsv() {
     const rows = selected.size ? sorted.filter((r) => selected.has(r.asset_id)) : sorted;
-    downloadCsv(`itrack-assets-${new Date().toISOString().slice(0, 10)}.csv`, rows.map((r) => ({
-      "Asset tag": r.asset_tag, Type: r.asset_type, Make: r.make, Model: r.model, "Serial no": r.serial_no,
+    const stamp = new Date().toISOString().slice(0, 10);
+    // Hardware goes out as .xlsx under the sheet's own headers, so it can be
+    // edited in Excel and brought back with Import.
+    if (columns) {
+      downloadXlsx(`itrack-${hw ? "hardware" : "fixed-assets"}-${stamp}.xlsx`, [{ name: LISTS[cur],
+        rows: rows.map((r) => Object.fromEntries(columns.map(([label, field]) => [label, r[field] ?? ""]))) }]);
+      return toast.success(`Exported ${rows.length} device${rows.length === 1 ? "" : "s"}.`);
+    }
+    downloadCsv(`itrack-${cur}-${stamp}.csv`, rows.map((r) => ({
+      "Asset tag": r.asset_tag, Category: r.asset_type, Make: r.make, Model: r.model, "Serial no": r.serial_no,
       Status: r.status, Holder: r.holder, "Holder since": r.holder_since, Location: r.location,
       Department: r.department, "Purchase date": r.purchase_date, "PO no": r.po_no, "Invoice no": r.invoice_no,
       Vendor: r.vendor, "Warranty end": r.warranty_end, Warranty: r.warranty, "Refresh due": r.refresh_due,
@@ -119,7 +188,7 @@ export default function RegisterPage() {
 
   async function applyBulkStatus() {
     const ids = [...selected];
-    const { error } = await supabase.from("assets").update({ status: bulkStatus }).in("asset_id", ids);
+    const { error } = await supabase.from("assets").update({ [hw ? "hw_status" : "status"]: bulkStatus }).in("asset_id", ids);
     // One statement: if any ticked asset is still held, the database refuses all of them.
     if (error) return toast.error(error.message);
     toast.success(`${ids.length} asset${ids.length === 1 ? "" : "s"} set to ${bulkStatus}.`);
@@ -137,18 +206,54 @@ export default function RegisterPage() {
   }
 
   const closeModal = () => setModal(null);
+  // Register + Scan QR of a serial already stored: show that record instead.
+  // A serial field may hold two, " / " separated.
+  function showExisting(serial) {
+    const s = serial.toUpperCase();
+    const r = data.rows.find((a) => a.serial_no?.toUpperCase().split(/\s*\/\s*/).includes(s));
+    if (!r) return false;
+    toast.success(`Serial ${serial} is already registered as ${r.asset_tag}.`);
+    if (list && r.list !== list) {
+      window.location.assign(`/${LIST_ROUTES[r.list]}/?q=${encodeURIComponent(r.asset_tag)}&open=1`);
+    } else {
+      setView(r.list);
+      setModal({ mode: "detail", asset: r });
+    }
+    return true;
+  }
   const afterSave = () => { closeModal(); reload(); };
-  const totalBook = isAdmin && data ? data.rows.reduce((s, r) => s + (r.book_value || 0), 0) : null;
+  const totalBook = isAdmin && data ? rows.reduce((s, r) => s + (r.book_value || 0), 0) : null;
+  const kpis = hw ? HW_KPIS : fx ? [] : list ? LISTING_KPIS : STATUS_KPIS;
+  const showBook = isAdmin && !list;
+  // Next free tag in this listing's series, e.g. HW-004 after HW-003.
+  const nextTag = useMemo(() => {
+    const prefix = hw ? "HW-" : fx ? null : "ACC-"; // fixed assets are tagged by their F/A Code
+    if (!prefix) return "";
+    const n = Math.max(0, ...(data?.rows ?? []).map((r) => r.asset_tag.startsWith(prefix) ? parseInt(r.asset_tag.slice(prefix.length), 10) || 0 : 0));
+    return prefix + String(n + 1).padStart(3, "0");
+  }, [data, hw]);
 
   return (
     <>
-      <PageHeader title="Asset Register" help="asset-register"
-        subtitle="Every IT hardware item the company owns, live from the database."
+      <PageHeader title={LISTS[list] || "Asset Register"} help="asset-register"
+        subtitle={list ? `Everything filed under ${LISTS[list]} categories, live from the database.`
+          : "Every IT hardware item the company owns, live from the database."}
         actions={<>
+          {isAdmin && list && (
+            <a href="/manage/" className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-2 text-sm">
+              <Tags className="h-4 w-4" /> Categories
+            </a>
+          )}
           <button onClick={exportCsv} disabled={!data}
             className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-2 text-sm disabled:opacity-50">
-            <Download className="h-4 w-4" />{selected.size ? `Export ${selected.size} selected` : "Export CSV"}
+            <Download className="h-4 w-4" />{selected.size ? `Export ${selected.size} selected` : columns ? "Export Excel" : "Export CSV"}
           </button>
+          {isAdmin && hw && (
+            <button onClick={() => setModal({ mode: "import" })} disabled={!data}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-2 text-sm disabled:opacity-50">
+              <FileUp className="h-4 w-4" /> Import Excel
+            </button>
+          )}
           {!isViewer && (
             <button onClick={() => setModal({ mode: "new" })} disabled={!data}
               className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-2 text-sm font-medium text-brand-fg">
@@ -159,15 +264,27 @@ export default function RegisterPage() {
 
       {error && <Card className="mb-4 p-4 text-danger" role="alert">Error loading data: {error}</Card>}
 
-      {!data && !error ? <KpiSkeleton count={6} /> : data && (
-        <div className={cn("grid grid-cols-2 gap-3 sm:grid-cols-3", isAdmin ? "xl:grid-cols-7" : "xl:grid-cols-6")}>
-          {STATUS_KPIS.map((s) => (
+      {!list && (
+        <div className="mb-4 flex gap-1 rounded-xl border border-border bg-surface p-1" role="tablist" aria-label="Listing">
+          {REGISTER_VIEWS.map(([k, label]) => (
+            <button key={k} role="tab" aria-selected={view === k}
+              onClick={() => { setView(k); setFilters((f) => ({ ...f, type: "", status: "" })); setPage(1); setSelected(new Set()); }}
+              className={cn("flex-1 rounded-lg px-4 py-2 text-sm sm:flex-none", view === k ? "bg-brand/10 font-medium text-brand" : "text-muted hover:text-fg")}>
+              {label}
+            </button>
+          ))}
+        </div>
+      )}
+
+      {!data && !error ? <KpiSkeleton count={kpis.length} /> : data && (
+        <div className={cn("grid grid-cols-2 gap-3", KPI_GRID[kpis.length + (showBook ? 1 : 0)])}>
+          {kpis.map((s) => (
             <KpiCard key={s.status} label={s.status} icon={s.icon} tone={s.tone}
-              value={data.rows.filter((r) => r.status === s.status).length}
+              value={rows.filter((r) => statusOf(r) === s.status).length}
               active={filters.status === s.status}
               onClick={() => setFilter("status", filters.status === s.status ? "" : s.status)} />
           ))}
-          {isAdmin && <KpiCard label="Book value" icon={Wallet} tone="brand" value={"RM " + Math.round(totalBook).toLocaleString("en-MY")} />}
+          {showBook && <KpiCard label="Book value" icon={Wallet} tone="brand" value={"RM " + Math.round(totalBook).toLocaleString("en-MY")} />}
         </div>
       )}
 
@@ -175,7 +292,7 @@ export default function RegisterPage() {
         <div className="flex gap-2">
           <div className="relative flex-1">
             <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted" />
-            <input className={cn(inputCls, "pl-9")} placeholder="Search tag, serial, make, model or holder"
+            <input className={cn(inputCls, "pl-9")} placeholder="Search tag, serial, make, model, holder or location"
               value={filters.q} onChange={(e) => setFilter("q", e.target.value)} aria-label="Search assets" />
           </div>
           <button onClick={() => setShowFilters((s) => !s)} aria-expanded={showFilters}
@@ -185,22 +302,24 @@ export default function RegisterPage() {
         </div>
         {showFilters && (
           <div className="mt-3 grid grid-cols-2 gap-2 md:grid-cols-4 xl:grid-cols-8">
-            <select aria-label="Type" className={inputCls} value={filters.type} onChange={(e) => setFilter("type", e.target.value)}>
-              <option value="">All types</option>{ASSET_TYPES.map((t) => <option key={t}>{t}</option>)}
+            <select aria-label="Category" className={inputCls} value={filters.type} onChange={(e) => setFilter("type", e.target.value)}>
+              <option value="">All categories</option>{categories.map((t) => <option key={t}>{t}</option>)}
             </select>
             <select aria-label="Status" className={inputCls} value={filters.status} onChange={(e) => setFilter("status", e.target.value)}>
-              <option value="">All statuses</option>{ASSET_STATUSES.map((t) => <option key={t}>{t}</option>)}
+              <option value="">All statuses</option>{(hw ? HW_STATUSES : ASSET_STATUSES).map((t) => <option key={t}>{t}</option>)}
             </select>
             <select aria-label="Department" className={inputCls} value={filters.department} onChange={(e) => setFilter("department", e.target.value)}>
               <option value="">All departments</option>{departments.map((d) => <option key={d}>{d}</option>)}
             </select>
-            <select aria-label="Location" className={inputCls} value={filters.location} onChange={(e) => setFilter("location", e.target.value)}>
-              <option value="">All locations</option>
-              {(data?.lookups.locations ?? []).map((l) => <option key={l.location_id} value={l.location_id}>{l.name}</option>)}
-            </select>
-            <select aria-label="Warranty" className={inputCls} value={filters.warranty} onChange={(e) => setFilter("warranty", e.target.value)}>
-              <option value="">Any warranty</option>{WARRANTY_STATES.map((w) => <option key={w}>{w}</option>)}
-            </select>
+            {!columns && <>
+              <select aria-label="Location" className={inputCls} value={filters.location} onChange={(e) => setFilter("location", e.target.value)}>
+                <option value="">All locations</option>
+                {(data?.lookups.locations ?? []).map((l) => <option key={l.location_id} value={l.location_id}>{l.name}</option>)}
+              </select>
+              <select aria-label="Warranty" className={inputCls} value={filters.warranty} onChange={(e) => setFilter("warranty", e.target.value)}>
+                <option value="">Any warranty</option>{WARRANTY_STATES.map((w) => <option key={w}>{w}</option>)}
+              </select>
+            </>}
             <label className="text-xs text-muted">Purchased from
               <input type="date" className={inputCls} value={filters.from} onChange={(e) => setFilter("from", e.target.value)} />
             </label>
@@ -219,7 +338,7 @@ export default function RegisterPage() {
             {!isViewer && (
               <>
                 <select aria-label="New status" className={cn(inputCls, "w-auto")} value={bulkStatus} onChange={(e) => setBulkStatus(e.target.value)}>
-                  <option value="">Change status…</option>{MANUAL_STATUSES.map((s) => <option key={s}>{s}</option>)}
+                  <option value="">Change status…</option>{(hw ? HW_STATUSES : MANUAL_STATUSES).map((s) => <option key={s}>{s}</option>)}
                 </select>
                 <button disabled={!bulkStatus} onClick={applyBulkStatus}
                   className="rounded-lg bg-brand px-3 py-2 text-brand-fg disabled:opacity-40">Apply</button>
@@ -236,8 +355,8 @@ export default function RegisterPage() {
           {!data && !error && <TableSkeleton rows={8} cols={6} />}
           {data && sorted.length === 0 && (
             <EmptyState icon={Package}
-              title={data.rows.length ? "No assets match these filters" : "No assets yet"}
-              message={data.rows.length ? "Clear a filter or change the search." : "Register the first asset to get started."} />
+              title={rows.length ? "No assets match these filters" : "No assets yet"}
+              message={rows.length ? "Clear a filter or change the search." : "Register the first asset to get started."} />
           )}
 
           {data && sorted.length > 0 && (
@@ -252,13 +371,16 @@ export default function RegisterPage() {
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-2">
                           <span className="text-base font-semibold">{r.asset_tag}</span>
-                          <StatusBadge status={r.status} />
+                          <StatusBadge status={statusOf(r)} />
                         </div>
                         <p className="text-sm">{r.asset_type} · {[r.make, r.model].filter(Boolean).join(" ") || "—"}</p>
                         <p className="text-sm text-muted">
-                          {r.holder ? <>Held by {r.holder} since {fmtDate(r.holder_since)}</> : r.location || "No location"}
+                          {r.holder ? <>Held by {r.holder}{hw ? r.holder_emp_no && ` (${r.holder_emp_no})` : ` since ${fmtDate(r.holder_since)}`}</>
+                            : hw ? "No employee" : fx ? [r.plant, r.department].filter(Boolean).join(" · ") || "—" : r.location || "No location"}
                         </p>
-                        <p className="text-xs text-muted">Warranty: {r.warranty}{r.warranty_end && ` (${fmtDate(r.warranty_end)})`}</p>
+                        {fx ? <p className="text-xs text-muted">{r.asset_type}{r.quantity > 1 && ` · Qty ${r.quantity}`}{r.purchase_date && ` · ${fmtDate(r.purchase_date)}`}</p>
+                          : hw ? <p className="text-xs text-muted">{[r.serial_no, r.os, r.ram, r.storage].filter(Boolean).join(" · ")}</p>
+                          : <p className="text-xs text-muted">Warranty: {r.warranty}{r.warranty_end && ` (${fmtDate(r.warranty_end)})`}</p>}
                       </div>
                     </div>
                     <button onClick={() => setModal({ mode: "detail", asset: r })}
@@ -275,14 +397,18 @@ export default function RegisterPage() {
                   <thead className="border-b border-border">
                     <tr>
                       <th className="w-8 px-2"><input type="checkbox" aria-label="Select all on this page" checked={allOnPage} onChange={togglePage} /></th>
+                      {columns ? columns.map(([label, field]) => (
+                        <SortableTh key={field} label={label} field={field} sort={sort} setSort={setSort} className="whitespace-nowrap" />
+                      )) : <>
                       <SortableTh label="Tag" field="asset_tag" sort={sort} setSort={setSort} />
-                      <SortableTh label="Type" field="asset_type" sort={sort} setSort={setSort} />
+                      <SortableTh label="Category" field="asset_type" sort={sort} setSort={setSort} />
                       <SortableTh label="Make / model" field="make" sort={sort} setSort={setSort} />
                       <SortableTh label="Serial" field="serial_no" sort={sort} setSort={setSort} className="hidden lg:table-cell" />
                       <SortableTh label="Status" field="status" sort={sort} setSort={setSort} />
                       <SortableTh label="Holder" field="holder" sort={sort} setSort={setSort} />
-                      <SortableTh label="Location" field="location" sort={sort} setSort={setSort} className="hidden xl:table-cell" />
+                      <SortableTh label="Location" field="item_location" sort={sort} setSort={setSort} />
                       <SortableTh label="Warranty end" field="warranty_end" sort={sort} setSort={setSort} className="hidden lg:table-cell" />
+                      </>}
                       <th className="sticky right-0 bg-surface px-2 text-right text-xs font-medium text-muted">Actions</th>
                     </tr>
                   </thead>
@@ -293,20 +419,27 @@ export default function RegisterPage() {
                         <Fragment key={r.asset_id}>
                           <tr className={cn("border-b border-border hover:bg-sunken", open && "bg-sunken")}>
                             <td className="px-2"><input type="checkbox" aria-label={`Select ${r.asset_tag}`} checked={selected.has(r.asset_id)} onChange={() => toggle(r.asset_id)} /></td>
+                            {columns ? columns.map(([label, field, cell], i) => (
+                              <td key={field} className={cn("px-3 py-2", field === "asset_tag" ? "whitespace-nowrap font-medium" : field === "remark" || (fx && field === "model") ? "min-w-[16rem]" : "whitespace-nowrap")}>
+                                {(cell ? cell(r) : r[field]) || <span className="text-muted">—</span>}
+                              </td>
+                            )) : <>
                             <td className="whitespace-nowrap px-3 py-2 font-medium">{r.asset_tag}{!r.active && <span className="ml-1 text-xs text-muted">(inactive)</span>}</td>
                             <td className="px-3 py-2">{r.asset_type}</td>
                             <td className="px-3 py-2">{[r.make, r.model].filter(Boolean).join(" ") || "—"}</td>
                             <td className="hidden px-3 py-2 text-muted lg:table-cell">{r.serial_no || "—"}</td>
                             <td className="px-3 py-2"><StatusBadge status={r.status} /></td>
                             <td className="px-3 py-2">{r.holder || <span className="text-muted">—</span>}</td>
-                            <td className="hidden px-3 py-2 xl:table-cell">{r.location || "—"}</td>
+                            <td className="px-3 py-2">{r.item_location || <span className="text-muted">—</span>}</td>
                             <td className={cn("hidden whitespace-nowrap px-3 py-2 lg:table-cell",
                               r.warranty === "Expired" ? "text-danger" : r.warranty.startsWith("Expires") ? "text-warn" : "")}>
                               {r.warranty_end ? fmtDate(r.warranty_end) : "—"}
                             </td>
+                            </>}
                             <td className={cn("sticky right-0 px-2 py-1 text-right", open ? "bg-sunken" : "bg-surface")}>
                               <div className="flex justify-end gap-1">
-                                <button onClick={() => setExpanded(open ? null : r.asset_id)} aria-expanded={open}
+                                <button onClick={() => (columns ? setModal({ mode: "detail", asset: r }) : setExpanded(open ? null : r.asset_id))}
+                                  aria-expanded={open}
                                   aria-label={`${open ? "Collapse" : "Expand"} ${r.asset_tag}`} className="rounded-lg p-1.5 text-muted hover:bg-border/50 hover:text-fg">
                                   {open ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
                                 </button>
@@ -327,7 +460,7 @@ export default function RegisterPage() {
                           </tr>
                           {open && (
                             <tr className="border-b border-border bg-sunken/50">
-                              <td colSpan={10} className="px-4 py-4">
+                              <td colSpan={columns ? columns.length + 2 : 10} className="px-4 py-4">
                                 <AssetDetail asset={r} lookups={data.lookups} showCost={isAdmin} />
                               </td>
                             </tr>
@@ -341,13 +474,13 @@ export default function RegisterPage() {
 
               <Pagination page={page} pageSize={pageSize} total={sorted.length} onPage={setPage}
                 onPageSize={(n) => { setPageSize(n); setPage(1); }} />
-              <p className="sr-only" data-testid="asset-total">{data.rows.length}</p>
+              <p className="sr-only" data-testid="asset-total">{rows.length}</p>
             </>
           )}
         </div>
       </Card>
 
-      <ModalPortal wide open={!!modal} onClose={closeModal} labelledBy={modal?.mode === "detail" ? "asset-detail-title" : "asset-form-title"}>
+      <ModalPortal wide open={!!modal} onClose={closeModal} labelledBy={modal?.mode === "detail" ? "asset-detail-title" : modal?.mode === "import" ? "import-title" : "asset-form-title"}>
         {modal?.mode === "detail" && (
           <>
             <div className="mb-4 flex items-center justify-between gap-2">
@@ -367,12 +500,18 @@ export default function RegisterPage() {
                 <button onClick={closeModal} aria-label="Close" className="rounded-lg border border-border p-2"><X className="h-4 w-4" /></button>
               </div>
             </div>
-            <AssetDetail asset={modal.asset} lookups={data.lookups} showCost={isAdmin} />
+            <AssetDetail asset={modal.asset} lookups={data.lookups} showCost={isAdmin} fields={hw ? [...HW_COLUMNS,
+              // Finance's register: not on IT's sheet, so detail only. Cost is admin-only (RLS).
+              ["F/A Code", "fa_code"], ...(isAdmin ? [["Purchase cost", "purchase_cost_rm", (r) => r.purchase_cost_rm != null && fmtRM(r.purchase_cost_rm)]] : []),
+            ] : columns ?? undefined} />
           </>
         )}
+        {modal?.mode === "import" && isAdmin && <HardwareImport data={data} isAdmin={isAdmin} onDone={reload} onClose={closeModal} />}
         {(modal?.mode === "edit" || modal?.mode === "new") && !isViewer && (
-          <AssetForm asset={modal.asset} lookups={data.lookups} departments={departments} isAdmin={isAdmin}
-            onSaved={afterSave} onDeleted={afterSave} onCancel={closeModal} />
+          hw ? <HardwareForm asset={modal.asset} lookups={data.lookups} departments={departments} isAdmin={isAdmin} nextTag={nextTag}
+            onSaved={afterSave} onDeleted={afterSave} onCancel={closeModal} onExisting={modal.asset ? undefined : showExisting} />
+          : <AssetForm asset={modal.asset} lookups={data.lookups} list={cur} nextTag={nextTag} departments={departments} isAdmin={isAdmin}
+            onSaved={afterSave} onDeleted={afterSave} onCancel={closeModal} onExisting={modal.asset ? undefined : showExisting} />
         )}
       </ModalPortal>
     </>

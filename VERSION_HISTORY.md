@@ -6,7 +6,7 @@ of the sidebar so the deployed build can be identified on screen.
 
 | Version | Date | What shipped |
 |---|---|---|
-| 1.0.0 | not yet released | First release: asset register and history, allocation and return, equipment requests with approvals, email notifications through Microsoft 365, warranty and refresh, analytics, asset value, data and user management, change log, in-app user guide. |
+| 1.0.0 | 2026-10-07 | First release: IT Inventory (hardware, IT's 29-column sheet + Location, Excel import/export), IT Accessories and IT Fixed Assets listings with editable categories; asset register and history, allocation and return, equipment requests with approvals, warranty and refresh, analytics, asset value, data and user management, change log, in-app user guide. Email is off (Resend pending); the PDF request receipt archive runs. |
 
 ## Publishing a release
 
@@ -14,7 +14,9 @@ Publishing is manual and needs the hosting control panel. Nothing deploys
 automatically.
 
 1. Set the new version in `app/version.js` and add a row above.
-2. `npm run build`. This also regenerates the user guide.
+2. `npm run build`. This also regenerates the user guide. If `npm run dev` is
+   running, use `NEXT_DIST_DIR=out npm run build` instead: a plain build
+   rewrites the `.next` folder the dev server is serving from.
 3. `npm run package`. This writes `itrack-vX.Y.Z-deploy.zip` and refuses to
    overwrite an existing one.
 4. `node tools/check-zip-perms.mjs itrack-vX.Y.Z-deploy.zip`. Do not upload

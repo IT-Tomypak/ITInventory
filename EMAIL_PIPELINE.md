@@ -1,5 +1,14 @@
 # Email pipeline
 
+> **Status (2026-10-07): email is OFF.** IT dropped the Microsoft Graph route
+> and will use **Resend** later. The four mail triggers are disabled
+> (`20261007000600_email_paused.sql`) and the `notify_graph_*` secrets were
+> deleted from Vault. The PDF receipt archive still runs. The `notify` function
+> already sends through **Resend** (deployed v2, 2026-10-07). To go live:
+> verify the domain in Resend, add `notify_resend_api_key` to Vault, set
+> `notify_from` / `notify_app_url`, then `enable trigger` the four triggers.
+> Sections below that mention Graph, Entra or Exchange describe the old route.
+
 ITrack sends mail through **Microsoft Graph** from a Tomypak Microsoft 365
 mailbox. There is no third-party mail service and no SMTP. Edge Functions
 cannot open SMTP ports, and the site is static, so it has no server of its own.

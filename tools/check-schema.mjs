@@ -65,6 +65,11 @@ r = await as("officer", "select created_by_name from assets"); ok(r.rows[0].crea
 r = await as("viewer", "update assets set make='Hacked' where asset_tag='IT-0001' returning *"); ok(r.rows.length === 0, "viewer PATCH on assets changes nothing");
 await refused(() => as("viewer", "insert into locations(name) values ('x')"), "viewer master-data insert");
 await refused(() => as("officer", "insert into vendors(name) values ('x')"), "officer master-data insert");
+await refused(() => as("officer", "insert into categories(name, list) values ('x','accessory')"), "officer adds a category");
+await refused(() => as("officer", "insert into assets(asset_tag, asset_type) values ('IT-0009','Toaster')"), "asset with unknown category");
+await as("admin", "insert into categories(name, list) values ('Webcam','accessory')");
+await as("admin", "update categories set name='Web camera' where name='Webcam'");
+ok(true, "admin adds and renames a category");
 r = await as("viewer", "select count(*)::int n from assets"); ok(r.rows[0].n === 1, "viewer can read assets");
 await as("officer", "update assets set make='Dell', model='5420', warranty_end='2027-01-01' where asset_tag='IT-0001'");
 r = await as("admin", "select field from asset_audit where action='updated' order by audit_id"); ok(r.rows.length === 3, "3 fields -> 3 audit rows " + r.rows.map((x) => x.field));
@@ -175,8 +180,11 @@ const asService = async (sql, params) => {
 };
 const req1 = (await db.query("select min(request_id)::int id from equipment_request")).rows[0].id;
 r = await db.query("select body->>'kind' k, headers->>'x-webhook-secret' s from net.calls where (body->>'request_id')::int = $1 and body->>'kind' in ('new_request', 'receipt')", [req1]);
-ok(r.rows.map((x) => x.k).sort().join() === "new_request,receipt" && r.rows.every((x) => x.s === "test-secret"),
-  "a public request queues new_request + receipt, with the webhook secret " + JSON.stringify(r.rows));
+// Email is paused (20261007000600): only the receipt archive is queued, no new_request mail.
+ok(r.rows.map((x) => x.k).sort().join() === "receipt" && r.rows.every((x) => x.s === "test-secret"),
+  "email paused: a public request queues only the receipt archive, with the webhook secret " + JSON.stringify(r.rows));
+r = await db.query("select count(*)::int n from net.calls where body->>'kind' in ('new_request', 'release', 'handover')");
+ok(r.rows[0].n === 0, "email paused: no new_request / release / handover mail is queued");
 const tok = (await asService("select create_assignment_link($1, 'assign_officer') t", [req1])).rows[0].t;
 r = await asService("select assignment_link($1, '2') j", [tok]);
 ok(r.rows[0].j.ok && /Olly Officer/.test(r.rows[0].j.what), "email link preview says what will happen " + JSON.stringify(r.rows[0].j));

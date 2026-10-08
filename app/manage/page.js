@@ -6,7 +6,7 @@
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Boxes, Database, Download, Lock, Pencil, Plus, Save, Search } from "lucide-react";
 import { supabase } from "../../lib/supabaseClient";
-import { addDays, fetchAll, today } from "../../lib/assets";
+import { LISTS, addDays, fetchAll, today } from "../../lib/assets";
 import { downloadCsv } from "../../lib/csv";
 import { useAuth } from "../components/AuthProvider";
 import { inputCls } from "../components/AssetForm";
@@ -22,6 +22,12 @@ const PURPOSE_LABELS = {
 };
 
 const TABLES = [
+  { id: "categories", label: "Categories", pk: "name", order: "name",
+    note: "Which listing each category appears on. Renaming a category renames it on every asset that uses it.", columns: [
+    { key: "name", label: "Name", required: true },
+    { key: "list", label: "Listing", type: "select", options: LISTS, required: true },
+    { key: "active", label: "Active", type: "bool" },
+  ] },
   { id: "locations", label: "Locations", pk: "location_id", order: "name", columns: [
     { key: "name", label: "Name", required: true }, { key: "site", label: "Site" }, { key: "floor", label: "Floor" },
     { key: "notes", label: "Notes", hideInList: true }, { key: "active", label: "Active", type: "bool" },
@@ -34,7 +40,8 @@ const TABLES = [
   { id: "staff", label: "Staff", pk: "staff_id", order: "full_name",
     note: "Logins are created on User Management, which also links them to a staff record here.", columns: [
     { key: "full_name", label: "Full name", required: true }, { key: "email", label: "Email", type: "email" },
-    { key: "department", label: "Department" }, { key: "role", label: "Job title" },
+    { key: "employee_no", label: "Employee ID" },
+    { key: "department", label: "Department" }, { key: "role", label: "Designation" },
     { key: "login_id", label: "Login ID" },
     { key: "eligible", label: "Eligible", type: "tristate" },
   ] },
@@ -245,7 +252,7 @@ export default function ManagePage() {
   }
   return (
     <>
-      <PageHeader title="Data Management" help="data-management" subtitle="Locations, vendors, staff records and notification recipients." />
+      <PageHeader title="Data Management" help="data-management" subtitle="Categories, locations, vendors, staff records and notification recipients." />
       <div className="mb-4 flex flex-wrap gap-1 rounded-xl border border-border bg-surface p-1" role="tablist">
         {TABLES.map((t) => (
           <button key={t.id} role="tab" aria-selected={tab === t.id} onClick={() => setTab(t.id)}

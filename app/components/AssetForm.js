@@ -4,9 +4,10 @@
 import { useState } from "react";
 import { Camera, Save, X } from "lucide-react";
 import { supabase } from "../../lib/supabaseClient";
-import { ASSET_TYPES, MANUAL_STATUSES } from "../../lib/assets";
+import { LISTS, MANUAL_STATUSES } from "../../lib/assets";
 import { joinPhotos, splitPhotos, uploadPhoto } from "../../lib/photos";
 import { HoldToConfirmButton, toast } from "./ui";
+import QrScan from "./QrScan";
 
 export const inputCls = "w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand disabled:opacity-60";
 const nz = (v) => (typeof v === "string" ? v.trim() || null : v ?? null);
@@ -21,11 +22,13 @@ function L({ label, children, wide }) {
   );
 }
 
-export default function AssetForm({ asset, lookups, departments, isAdmin, onSaved, onDeleted, onCancel }) {
+export default function AssetForm({ asset, lookups, list, nextTag, departments, isAdmin, onSaved, onDeleted, onCancel, onExisting }) {
   const editing = !!asset;
+  // Active categories of this listing, plus the asset's own even if retired since.
+  const categories = lookups.categories.filter((c) => (!list || c.list === list) && (c.active || c.name === asset?.asset_type));
   const custody = editing && ["Assigned", "Loaned"].includes(asset.status);
   const [f, setF] = useState(() => ({
-    asset_tag: asset?.asset_tag ?? "", asset_type: asset?.asset_type ?? "Laptop",
+    asset_tag: asset?.asset_tag ?? nextTag ?? "", asset_type: asset?.asset_type ?? categories[0]?.name ?? "",
     make: asset?.make ?? "", model: asset?.model ?? "", serial_no: asset?.serial_no ?? "",
     status: asset?.status ?? "In stock", location_id: asset?.location_id ?? "", department: asset?.department ?? "",
     purchase_date: asset?.purchase_date ?? "", po_no: asset?.po_no ?? "", invoice_no: asset?.invoice_no ?? "",
@@ -33,10 +36,13 @@ export default function AssetForm({ asset, lookups, departments, isAdmin, onSave
     refresh_years: asset?.refresh_years ?? 4, refresh_due: asset?.refresh_due ?? "",
     spec_notes: asset?.spec_notes ?? "", active: asset?.active ?? true,
     purchase_cost_rm: asset?.purchase_cost_rm ?? "",
+    quantity: asset?.quantity ?? 1, plant: asset?.plant ?? "", remark: asset?.remark ?? "", item_location: asset?.item_location ?? "",
   }));
   const [photos, setPhotos] = useState(() => splitPhotos(asset?.photo_path));
   const [busy, setBusy] = useState(false);
   const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value }));
+  // A scan fills only fields this form has; whatever is typed elsewhere stays.
+  const scanned = (v) => setF((s) => ({ ...s, ...Object.fromEntries(Object.entries(v).filter(([k]) => k in s)) }));
 
   async function addPhotos(e) {
     const files = [...e.target.files];
@@ -61,6 +67,8 @@ export default function AssetForm({ asset, lookups, departments, isAdmin, onSave
       purchase_date: nz(f.purchase_date), po_no: nz(f.po_no), invoice_no: nz(f.invoice_no),
       vendor_id: num(f.vendor_id), warranty_end: nz(f.warranty_end), refresh_years: num(f.refresh_years),
       refresh_due: nz(f.refresh_due), spec_notes: nz(f.spec_notes), photo_path: joinPhotos(photos), active: f.active,
+      item_location: nz(f.item_location),
+      ...(list === "fixed" ? { quantity: num(f.quantity) ?? 1, plant: nz(f.plant), remark: nz(f.remark) } : {}),
     };
     // Status is sent only when it changed, so an edit never re-asserts a custody status.
     if (!custody && f.status !== asset?.status) payload.status = f.status;
@@ -95,12 +103,20 @@ export default function AssetForm({ asset, lookups, departments, isAdmin, onSave
 
   return (
     <form onSubmit={save}>
-      <h2 id="asset-form-title" className="mb-4 text-lg font-semibold">{editing ? `Update ${asset.asset_tag}` : "Register an asset"}</h2>
+      <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+        <h2 id="asset-form-title" className="text-lg font-semibold">{editing ? `Update ${asset.asset_tag}` : "Register an asset"}</h2>
+        <QrScan onScan={scanned} onExisting={onExisting} />
+      </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <L label="Asset tag *"><input className={inputCls} value={f.asset_tag} onChange={set("asset_tag")} required autoFocus={!editing} /></L>
-        <L label="Type *">
-          <select className={inputCls} value={f.asset_type} onChange={set("asset_type")}>
-            {ASSET_TYPES.map((t) => <option key={t}>{t}</option>)}
+        <L label="Category *">
+          <select className={inputCls} value={f.asset_type} onChange={set("asset_type")} required>
+            {list ? categories.map((c) => <option key={c.name}>{c.name}</option>)
+              : Object.entries(LISTS).map(([k, label]) => (
+                <optgroup key={k} label={label}>
+                  {categories.filter((c) => c.list === k).map((c) => <option key={c.name}>{c.name}</option>)}
+                </optgroup>
+              ))}
           </select>
         </L>
         <L label="Make"><input className={inputCls} value={f.make} onChange={set("make")} /></L>
@@ -124,6 +140,11 @@ export default function AssetForm({ asset, lookups, departments, isAdmin, onSave
             {activeOnly(lookups.locations, "location_id", asset?.location_id).map((l) => <option key={l.location_id} value={l.location_id}>{l.name}</option>)}
           </select>
         </L>
+        <L label="Location (store / cabinet / shelf)">
+          <input className={inputCls} value={f.item_location} onChange={set("item_location")} list="item-locations"
+            placeholder="Pick from the list, or type a new location" />
+          <datalist id="item-locations">{lookups.itemLocations.map((l) => <option key={l} value={l} />)}</datalist>
+        </L>
         <L label="Owning department">
           <input className={inputCls} value={f.department} onChange={set("department")} list="dept-list" />
           <datalist id="dept-list">{departments.map((d) => <option key={d} value={d} />)}</datalist>
@@ -145,6 +166,11 @@ export default function AssetForm({ asset, lookups, departments, isAdmin, onSave
             <input type="number" min="0" step="0.01" className={inputCls} value={f.purchase_cost_rm} onChange={set("purchase_cost_rm")} />
           </L>
         )}
+        {list === "fixed" && <>
+          <L label="Quantity"><input type="number" min="1" className={inputCls} value={f.quantity} onChange={set("quantity")} /></L>
+          <L label="Plant (Cost Ctr. 1)"><input className={inputCls} value={f.plant} onChange={set("plant")} /></L>
+          <L label="Remarks" wide><textarea rows={2} className={inputCls} value={f.remark} onChange={set("remark")} /></L>
+        </>}
         <L label="Spec notes (CPU / RAM / disk…)" wide>
           <textarea rows={3} className={inputCls} value={f.spec_notes} onChange={set("spec_notes")} />
         </L>

@@ -28,7 +28,9 @@ function Section({ title, children }) {
 
 // asset: an enriched row from loadRegister(), or null for a deleted asset
 // (then only its history, which outlives it by design, is shown).
-export default function AssetDetail({ asset, assetId, lookups, showCost }) {
+// fields: optional [label, field, cell?] list (the register's HW_COLUMNS) shown
+// instead of the generic fields, so IT Hardware reads like IT's own sheet.
+export default function AssetDetail({ asset, assetId, lookups, showCost, fields }) {
   const id = asset?.asset_id ?? assetId;
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
@@ -58,14 +60,19 @@ export default function AssetDetail({ asset, assetId, lookups, showCost }) {
 
   return (
     <div className="text-sm">
-      {asset ? (
+      {asset && fields ? (
+        <dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 lg:grid-cols-4">
+          {fields.map(([label, field, cell]) => <Field key={field} label={label}>{cell ? cell(asset) : asset[field]}</Field>)}
+        </dl>
+      ) : asset ? (
         <dl className="grid grid-cols-2 gap-x-4 gap-y-3 sm:grid-cols-3 lg:grid-cols-4">
           <Field label="Asset tag"><span className="font-medium">{asset.asset_tag}</span></Field>
-          <Field label="Type">{asset.asset_type}</Field>
+          <Field label="Category">{asset.asset_type}</Field>
           <Field label="Make / model">{[asset.make, asset.model].filter(Boolean).join(" ")}</Field>
           <Field label="Serial no">{asset.serial_no}</Field>
+          {asset.hw_status && <Field label="Hardware status"><StatusBadge status={asset.hw_status} /></Field>}
           <Field label="Status"><StatusBadge status={asset.status} /></Field>
-          <Field label="Location">{asset.location}</Field>
+          <Field label="Location">{asset.item_location || asset.location}</Field>
           <Field label="Owning department">{asset.department}</Field>
           <Field label="Vendor">{asset.vendor}</Field>
           <Field label="Purchase date">{asset.purchase_date && fmtDate(asset.purchase_date)}</Field>
@@ -76,6 +83,18 @@ export default function AssetDetail({ asset, assetId, lookups, showCost }) {
           {showCost && <Field label="Book value today">{fmtRM(asset.book_value)}</Field>}
           <Field label="Registered">{asset.created_at && `${fmtDate(asset.created_at)} by ${asset.created_by_name || "—"}`}</Field>
           {!asset.active && <Field label="Active">No</Field>}
+          {/* IT Hardware sheet fields; on other listings only the ones filled in. */}
+          {[["Employee ID", asset.holder_emp_no], ["Designation", asset.holder_designation], ["Previous user", asset.previous_user],
+            ["MAC address", asset.mac_address], ["OS", asset.os], ["M365 licence", asset.m365_license],
+            ["Office product key", asset.office_product_key], ["RAM", asset.ram], ["Storage", asset.storage],
+            ["AnyDesk ID", asset.anydesk_id], ["PowerApps ID", asset.powerapps_id], ["Workgroup", asset.workgroup],
+            ["Plant", asset.plant], ["Special app", asset.special_app], ["App licenses", asset.app_licenses],
+            ["Batch number", asset.batch_number], ["F/A Code", asset.fa_code]]
+            .filter(([, v]) => v || asset.list === "inventory")
+            .map(([label, v]) => <Field key={label} label={label}>{v}</Field>)}
+          {(asset.remark || asset.list === "inventory") && (
+            <div className="col-span-full"><Field label="Remark"><span className="whitespace-pre-line">{asset.remark}</span></Field></div>
+          )}
           <div className="col-span-full"><Field label="Spec notes"><span className="whitespace-pre-line">{asset.spec_notes}</span></Field></div>
         </dl>
       ) : (

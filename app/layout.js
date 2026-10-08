@@ -14,7 +14,12 @@ const FAVICON = "data:image/svg+xml," + encodeURIComponent(
 
 // Registered after load so it never competes with the first paint. sw.js
 // itself explains what it caches (pages network-first, hashed files cache-first).
-const SW_SCRIPT = `if("serviceWorker" in navigator)addEventListener("load",function(){navigator.serviceWorker.register("/sw.js").catch(function(){})})`;
+// Production only: `next dev` serves /_next/static/ under UNHASHED names, so the
+// cache-first rule would pin a dev browser to stale code forever. In dev, remove
+// any worker and cache left behind instead.
+const SW_SCRIPT = process.env.NODE_ENV === "production"
+  ? `if("serviceWorker" in navigator)addEventListener("load",function(){navigator.serviceWorker.register("/sw.js").catch(function(){})})`
+  : `if("serviceWorker" in navigator)navigator.serviceWorker.getRegistrations().then(function(rs){if(!rs.length)return;Promise.all(rs.map(function(r){return r.unregister()})).then(function(){return caches.keys()}).then(function(ks){return Promise.all(ks.map(function(k){return caches.delete(k)}))}).then(function(){location.reload()})})`;
 
 export const metadata = {
   title: "ITrack — IT Asset Management",
