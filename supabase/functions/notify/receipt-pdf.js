@@ -58,8 +58,9 @@ export const receiptTime = (iso) => new Date(iso).toLocaleString("en-GB", {
 });
 
 /**
- * d = { requestId, createdAt (ISO), name, department, assetType, urgency,
- *       photoCount, justification, statusUrl, company }
+ * d = { requestId, createdAt (ISO), name, employeeNo, department, hod,
+ *       assetType (every service asked for), urgency, photoCount,
+ *       justification, statusUrl, company }
  * Returns the PDF as a Uint8Array.
  */
 export function buildReceiptPdf(d) {
@@ -88,19 +89,19 @@ export function buildReceiptPdf(d) {
 
   y -= 22;
   for (const [label, value] of [
-    ["Requested by", d.name], ["Department", d.department], ["Asset type", d.assetType],
-    ["Urgency", d.urgency], ["Photos attached", String(d.photoCount ?? 0)],
+    ["Requested by", d.name], ["Employee no", d.employeeNo], ["Department", d.department], ["HOD", d.hod],
+    ["Request for", d.assetType], ["Urgency", d.urgency], ["Photos attached", String(d.photoCount ?? 0)],
   ]) {
     text(M, y, label, { size: 10, gray: 0.45 });
-    const v = wrap(value || "-", 11, W - 2 * M - 120)[0];
-    text(W - M, y, v, { size: 11, bold: true, align: "right" });
-    y -= 20;
+    const vs = wrap(value || "-", 11, W - 2 * M - 120);
+    vs.forEach((v, i) => text(W - M, y - i * 14, v, { size: 11, bold: true, align: "right" }));
+    y -= 20 + (vs.length - 1) * 14;
   }
   y += 4;
   dashed(y);
 
   y -= 22;
-  text(M, y, "Justification", { size: 10, gray: 0.45 });
+  text(M, y, "Description", { size: 10, gray: 0.45 });
   y -= 16;
   const maxLines = Math.floor((y - 130) / 14);
   let lines = wrap(d.justification || "-", 10, W - 2 * M);

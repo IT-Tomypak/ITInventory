@@ -91,7 +91,7 @@ export default function AllocatePage() {
     }
   }, []);
 
-  // Deep links: /allocate/?asset=12 picks the right mode; ?request=34 pre-links a request.
+  // Deep links: /allocate/?asset=12 picks the right mode; ?request=34 pre-links a request; ?due= starts a loan.
   useEffect(() => {
     reload().then((reg) => {
       if (!reg) return;
@@ -101,6 +101,8 @@ export default function AllocatePage() {
       if (a?.holder) { setMode("in"); setInn((s) => ({ ...s, asset: { ...a, key: a.asset_id } })); }
       else if (a) setOut((s) => ({ ...s, asset: { ...a, key: a.asset_id } }));
       if (req) setOut((s) => ({ ...s, request_id: req }));
+      // ?due=2026-10-20 from a loan request: start the form as a loan due back then.
+      if (p.get("due")) setOut((s) => ({ ...s, loan: true, due_back_on: p.get("due") }));
     });
   }, [reload]);
 
@@ -169,7 +171,7 @@ export default function AllocatePage() {
       ) : (
         <>
           <div role="tablist" className="mb-4 inline-flex rounded-xl border border-border bg-surface p-1">
-            {[["out", "Check out", ArrowUpFromLine], ["in", "Check in", ArrowDownToLine]].map(([k, label, Icon]) => (
+            {[["out", "Handover", ArrowUpFromLine], ["in", "Return", ArrowDownToLine]].map(([k, label, Icon]) => (
               <button key={k} role="tab" aria-selected={mode === k} onClick={() => setMode(k)}
                 className={cn("inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium", mode === k ? "bg-brand text-brand-fg" : "text-muted")}>
                 <Icon className="h-4 w-4" />{label}
@@ -298,7 +300,7 @@ export default function AllocatePage() {
                   </p>
                   <button disabled={busy || !inn.asset}
                     className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-5 py-2.5 text-sm font-medium text-brand-fg disabled:opacity-50">
-                    <ArrowDownToLine className="h-4 w-4" />{busy ? "Saving…" : "Check in"}
+                    <ArrowDownToLine className="h-4 w-4" />{busy ? "Saving…" : "Return asset"}
                   </button>
                 </div>
               </Card>

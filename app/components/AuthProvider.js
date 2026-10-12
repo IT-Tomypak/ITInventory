@@ -7,7 +7,7 @@ import { Landing, LoginScreen, SetPasswordScreen } from "./LoginScreens";
 // Routes that render with no session and no shell. AppShell imports THIS list
 // rather than keeping its own copy, so the gate and the shell cannot disagree
 // about what is public. Adding a route here makes it reachable by anyone.
-export const PUBLIC_ROUTES = ["/request", "/status", "/assign"];
+export const PUBLIC_ROUTES = ["/request", "/loan", "/status", "/assign"];
 
 // Staff sign in with their ID number. It maps to an address on a domain that
 // does not exist and never receives mail — so there is no reset email and no

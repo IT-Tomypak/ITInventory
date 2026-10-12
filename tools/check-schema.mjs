@@ -82,11 +82,11 @@ r = await as("officer", "select * from asset_audit where field='Purchase cost'")
 r = await as("admin", "select * from asset_audit where field='Purchase cost'"); ok(r.rows.length === 1, "admin sees cost audit");
 
 await as("officer", "insert into asset_assignment(asset_id, staff_id, condition_out) values (1, 2, 'Good')");
-r = await as("officer", "select status from assets"); ok(r.rows[0].status === "Assigned", "open assignment -> Assigned");
+r = await as("officer", "select status from assets"); ok(r.rows[0].status === "In use", "open assignment -> In use");
 await refused(() => as("officer", "insert into asset_assignment(asset_id, location_id) values (1, 1)"), "second open assignment");
 await refused(() => as("officer", "update assets set status='Retired' where asset_id=1"), "retire while held");
 await refused(() => as("officer", "update assets set status='In stock' where asset_id=1"), "manual In stock while held");
-await refused(() => as("officer", "insert into assets(asset_tag, asset_type, status) values ('IT-0002','Laptop','Assigned')"), "Assigned with no holder");
+await refused(() => as("officer", "insert into assets(asset_tag, asset_type, status) values ('IT-0002','Laptop','In use')"), "In use with no holder");
 await as("officer", "update asset_assignment set returned_on=current_date, return_status='In repair', condition_in='Damaged' where asset_id=1");
 r = await as("officer", "select status from assets"); ok(r.rows[0].status === "In repair", "return with In repair");
 r = await as("officer", "select issued_by is not null and received_by is not null as ok from asset_assignment"); ok(r.rows[0].ok, "issued_by/received_by stamped");
@@ -120,7 +120,7 @@ await refused(() => as("officer", `select allocate_asset(null, ${a100})`), "allo
 r = await as("officer", `select allocate_asset(1, ${a100}, 2, null, current_date, null, 'New', 'with charger') as id`);
 const asg = r.rows[0].id;
 r = await as("officer", `select (select status from assets where asset_id=${a100}) s, (select status from equipment_request where request_id=1) rs, (select asset_id from equipment_request where request_id=1) ra`);
-ok(r.rows[0].s === "Assigned" && r.rows[0].rs === "Allocated" && r.rows[0].ra === a100, "allocate: asset Assigned, request Allocated " + JSON.stringify(r.rows[0]));
+ok(r.rows[0].s === "In use" && r.rows[0].rs === "Allocated" && r.rows[0].ra === a100, "allocate: asset In use, request Allocated " + JSON.stringify(r.rows[0]));
 await refused(() => as("officer", `select allocate_asset(null, ${a100}, 1)`), "second allocation of same asset");
 await refused(() => as("officer", `select allocate_asset(1, ${a100}, 1)`), "allocate against an Allocated request");
 r = await as("admin", `select cost_rm::float c, book_value_rm::float b from assignment_value where assignment_id=${asg}`);
@@ -165,6 +165,44 @@ await refused(() => asAnon("select * from equipment_request"), "anon reads equip
 await refused(() => asAnon("select * from request_submission_log"), "anon reads submission log");
 await refused(() => asAnon("select allocate_asset(null, 1, 1)"), "anon allocates");
 r = await as("officer", "select count(*)::int n from request_submission_log"); ok(r.rows[0].n === 0, "officer cannot read submission log");
+
+// New request fields and the loan accessories request (20261012040000).
+await db.query("reset role"); await db.query("delete from request_submission_log");
+const submit9 = (emp, hod, services) => asAnon("select submit_equipment_request($1,$2,$3,$4,$5,$6,$7,$8,$9) as r",
+  ["Nina", "QA", null, "two things", "Normal", null, emp, hod, services]).then((x) => x.rows[0].r);
+r = await submit9("123456", "Mr HOD", ["Monitor", "Laptop"]); ok(r.ok, "request with employee no, HOD and two services " + JSON.stringify(r));
+r = await as("admin", `select asset_type, services, employee_no, hod from equipment_request where request_id=${r.request_id}`);
+ok(r.rows[0].asset_type === "Monitor" && r.rows[0].services === "Monitor, Laptop" && r.rows[0].employee_no === "123456" && r.rows[0].hod === "Mr HOD", "first service is the asset type, all are kept " + JSON.stringify(r.rows[0]));
+r = await submit9("", "Mr HOD", ["Laptop"]); ok(!r.ok && r.reason === "missing_fields", "request without employee no refused");
+r = await submit9("123456", "Mr HOD", []); ok(!r.ok && r.reason === "missing_fields", "request with no service ticked refused");
+r = await submit9("123456", "Mr HOD", ["Laptop", "Toaster"]); ok(!r.ok && r.reason === "invalid_asset_type", "unknown service refused");
+await as("officer", "insert into assets(asset_tag, asset_type) values ('ACC-LOAN1','Mouse')");
+r = await asAnon("select * from loanable_accessories()");
+ok(r.rows.length === 1 && r.rows[0].item_type === "Mouse" && r.rows[0].available === 1 && Object.keys(r.rows[0]).length === 2, "anon sees loanable types and counts only " + JSON.stringify(r.rows));
+const loan = (o = {}) => asAnon("select submit_loan_request($1,$2,$3,$4,$5,$6,$7,$8) as r",
+  ["Lina", o.emp ?? "654321", "Sales", "012-3456789", o.item ?? "Mouse", "mine broke", o.start ?? "2026-10-13", o.end ?? "2026-10-20"]).then((x) => x.rows[0].r);
+r = await loan(); ok(r.ok && r.loan_id > 0, "anon submits a loan request " + JSON.stringify(r));
+r = await loan({ emp: " " }); ok(!r.ok && r.reason === "missing_fields", "loan request without employee no refused");
+r = await loan({ end: "2026-10-12" }); ok(!r.ok && r.reason === "invalid_dates", "loan ending before it starts refused");
+r = await loan({ item: "Keyboard" }); ok(!r.ok && r.reason === "item_unavailable", "loan of a type with no stock refused");
+await refused(() => asAnon("select * from loan_request"), "anon reads loan_request");
+await refused(() => as("officer", "insert into loan_request(loaner_name, employee_no, department, phone, item_type, reason, start_on, end_on) values ('x','1','d','p','Mouse','r','2026-10-13','2026-10-14')"), "officer inserts a loan request directly");
+r = await as("viewer", "update loan_request set status='Approved' returning *"); ok(r.rows.length === 0, "viewer cannot update a loan request");
+r = await as("officer", "update loan_request set status='Approved' returning status"); ok(r.rows[0]?.status === "Approved", "officer moves a loan request on");
+
+// Requester email and the HOD list (20261012050000).
+await db.query("reset role"); await db.query("delete from request_submission_log");
+const submit10 = (hod, email) => asAnon("select submit_equipment_request($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) as r",
+  ["Omar", "QA", null, null, "Normal", null, "111111", hod, ["Laptop"], email]).then((x) => x.rows[0].r);
+r = await asAnon("select * from hod_names()");
+ok(r.rows.length === 20 && Object.keys(r.rows[0]).length === 1 && !JSON.stringify(r.rows).includes("@"), "anon gets the 20 HOD names and no email");
+await refused(() => asAnon("select * from hod"), "anon reads the hod table");
+r = await submit10("tan see yin", " Omar@Example.COM "); ok(r.ok, "request with email and a listed HOD " + JSON.stringify(r));
+r = await as("admin", `select hod, hod_email, requester_email from equipment_request where request_id=${r.request_id}`);
+ok(r.rows[0].hod === "Tan See Yin" && r.rows[0].hod_email === "tansy@tomypak.com.my" && r.rows[0].requester_email === "omar@example.com", "HOD email paired in the database, requester email kept " + JSON.stringify(r.rows[0]));
+r = await submit10("Tan See Yin", "not-an-email"); ok(!r.ok && r.reason === "invalid_email", "bad requester email refused");
+r = await submit10("Somebody Else", "omar@example.com"); ok(!r.ok && r.reason === "invalid_hod", "HOD not on the list refused");
+await refused(() => as("officer", "insert into hod(name, email) values ('X','x@example.com')"), "officer edits the HOD list");
 
 await db.query("reset role"); await db.query("set role anon");
 await refused(() => db.query("select * from assets"), "anon reads assets");

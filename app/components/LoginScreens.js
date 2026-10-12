@@ -2,7 +2,7 @@
 // Pre-login screens. They live outside AppShell, so each carries its own theme
 // toggle: someone who prefers dark must not be forced through a white login.
 import { useState } from "react";
-import { ArrowLeft, ClipboardList, KeyRound, LogIn, Search } from "lucide-react";
+import { ArrowLeft, ClipboardList, KeyRound, LogIn, Search, Timer } from "lucide-react";
 import { supabase } from "../../lib/supabaseClient";
 import { idToEmail, useAuth } from "./AuthProvider";
 import { BrandLogo, Card, ThemeToggle, toast } from "./ui";
@@ -38,6 +38,11 @@ export function Landing({ onSignIn }) {
           <span className="rounded-xl bg-ok/10 p-3 text-ok"><ClipboardList className="h-6 w-6" /></span>
           <span><span className="block font-medium">I Need Equipment</span>
             <span className="text-sm text-muted">Request hardware — no login needed</span></span>
+        </a>
+        <a href="/loan/" className={choice}>
+          <span className="rounded-xl bg-info/10 p-3 text-info"><Timer className="h-6 w-6" /></span>
+          <span><span className="block font-medium">Borrow an Accessory</span>
+            <span className="text-sm text-muted">Loan request — no login needed</span></span>
         </a>
         <a href="/status/" className="flex items-center justify-center gap-1.5 pt-1 text-sm text-muted hover:text-brand">
           <Search className="h-4 w-4" /> Track an existing request
@@ -105,7 +110,7 @@ export function SetPasswordScreen() {
 
   async function submit(e) {
     e.preventDefault();
-    if (pw.length < 8) return toast.error("Use at least 8 characters.");
+    if (pw.length < 6) return toast.error("Use at least 6 characters.");
     if (pw !== pw2) return toast.error("The two passwords do not match.");
     setBusy(true);
     const { error } = await supabase.auth.updateUser({ password: pw });

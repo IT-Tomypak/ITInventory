@@ -1,10 +1,11 @@
+
 "use client";
 import { useEffect, useMemo, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import {
-  ArrowLeftRight, BarChart3, Bell, BookOpen, Boxes, Building2, CalendarClock, ChevronsLeft, ChevronsRight,
-  ClipboardList, Database, History, Laptop, LogOut, Menu, Mouse, ScrollText, Search, User, UserCog, Wallet, X,
+  ArrowLeftRight, BarChart3, Bell, BookOpen, Building2, CalendarClock, ChevronsLeft, ChevronsRight,
+  ClipboardList, Database, History, Laptop, LayoutDashboard, LogOut, Menu, Mouse, ScrollText, Search, User, UserCog, Wallet, Workflow, X,
 } from "lucide-react";
 import { supabase } from "../../lib/supabaseClient";
 import { ALERT_TONES, loadAlerts } from "../../lib/alerts";
@@ -15,10 +16,10 @@ import { APP_VERSION } from "../version";
 // ONE flat array: the role filter, the breadcrumb labels and the command
 // palette all read it. `section` is a flat property, not nesting.
 export const NAV_ITEMS = [
+  { href: "/",            label: "Dashboard",          icon: LayoutDashboard },
   { href: "/inventory",   label: "IT Inventory",       icon: Laptop },
   { href: "/accessories", label: "IT Accessories",     icon: Mouse },
   { href: "/fixed-assets", label: "IT Fixed Assets",   icon: Building2 },
-  { href: "/",          label: "Asset Register",     icon: Boxes,      section: "Other modules" },
   { href: "/analytics", label: "Analytics",          icon: BarChart3,  section: "Other modules" },
   { href: "/value",     label: "Asset Value",        icon: Wallet,     section: "Other modules", adminOnly: true },
   { href: "/warranty",  label: "Warranty & Refresh", icon: CalendarClock, section: "Other modules" },
@@ -28,6 +29,7 @@ export const NAV_ITEMS = [
   { href: "/staff",     label: "User Management",    icon: UserCog,    section: "Other modules", adminOnly: true },
   { href: "/audit",     label: "Change Log",         icon: ScrollText, adminOnly: true, section: "Audit Trail" },
   { href: "/assets",    label: "Asset History",      icon: History,    section: "Audit Trail" },
+  { href: "/flow",      label: "Process Flow",       icon: Workflow },
   { href: "/help",      label: "Help & User Guide",  icon: BookOpen },
 ];
 const ROUTE_LABELS = Object.fromEntries(NAV_ITEMS.map((i) => [i.href, i.label]));

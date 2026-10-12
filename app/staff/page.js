@@ -93,14 +93,14 @@ function UserForm({ user, staff, onDone, onCancel }) {
         <label className="block">
           <span className="mb-1 block text-xs text-muted">ID number *</span>
           <input className={inputCls} value={f.id_number} onChange={set("id_number")} required disabled={editing} autoFocus={!editing}
-            pattern="[A-Za-z0-9._\-]+" title="Letters, digits, dot, dash or underscore" />
+            pattern="\d{6}" maxLength={6} inputMode="numeric" title="Exactly 6 digits" />
           {/* Shown BEFORE saving: the address is the ID, not a second fact to collect. */}
           {f.id_number.trim() && <span className="mt-1 block text-xs text-muted">Signs in as {idToEmail(f.id_number)}</span>}
         </label>
         {!editing && (
           <label className="block">
-            <span className="mb-1 block text-xs text-muted">Password * (min 8 — hand it over yourself; there is no reset email)</span>
-            <input type="text" autoComplete="off" className={inputCls} value={f.password} onChange={set("password")} required minLength={8} />
+            <span className="mb-1 block text-xs text-muted">Password * (min 6 — hand it over yourself; there is no reset email)</span>
+            <input type="text" autoComplete="off" className={inputCls} value={f.password} onChange={set("password")} required minLength={6} />
           </label>
         )}
         <label className="block sm:col-span-2">
@@ -155,7 +155,7 @@ function PasswordForm({ user, onDone, onCancel }) {
       <h2 id="user-form-title" className="text-lg font-semibold">Set a password for {user.full_name || user.id_number}</h2>
       <p className="mt-1 text-sm text-muted">There is no reset email: the ID-number address receives no mail. Give the new password to the person yourself.</p>
       <input type="text" autoComplete="off" className={cn(inputCls, "mt-4")} value={pw} onChange={(e) => setPw(e.target.value)}
-        required minLength={8} autoFocus aria-label="New password" placeholder="At least 8 characters" />
+        required minLength={6} autoFocus aria-label="New password" placeholder="At least 6 characters" />
       <div className="mt-5 flex justify-end gap-2">
         <button type="button" onClick={onCancel} className="rounded-lg border border-border px-4 py-2 text-sm">Cancel</button>
         <button disabled={busy} className="rounded-lg bg-brand px-4 py-2 text-sm font-medium text-brand-fg disabled:opacity-50">Set password</button>

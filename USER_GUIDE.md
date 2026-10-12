@@ -11,14 +11,18 @@ Anyone in the company can ask IT for hardware. You do not need an ITrack account
 ### Request equipment
 
 1. Open ITrack and choose **I Need Equipment**.
-2. Fill in **Your name** and **Department**. Use your name as it appears in the
-   staff list; IT uses it to match the request to you.
-3. Under **What do you need?** pick the type of item (laptop, monitor, printer…).
-4. Choose **Normal** or **Urgent**, and say **Why do you need it?**. A sentence
-   or two helps IT decide quickly.
-5. Optionally attach up to 4 photos, for example of a broken item. On a phone,
+2. Fill in **Requester name**, **Employee no**, **Your email** and
+   **Department**. Use your name as it appears in the staff list; IT uses it to
+   match the request to you. Updates on the request are sent to that email.
+3. Under **HOD Department** start typing your Head of Department's name and
+   pick it from the list that drops down. It must be a name from the list.
+4. Under **Request for Service(s)** tick every type of item you need (laptop,
+   monitor, printer…). At least one is required.
+5. Choose **Normal** or **Urgent**. The **Description** is optional, but a
+   sentence or two helps IT decide quickly.
+6. Optionally attach up to 4 photos, for example of a broken item. On a phone,
    **Camera** opens the camera directly.
-6. Press **Send request**.
+7. Press **Send request**.
 
 You get a **receipt** with your request number. Press **Download receipt** to
 keep a PDF copy, and quote the number whenever you contact IT.
@@ -28,6 +32,20 @@ keep a PDF copy, and quote the number whenever you contact IT.
 
 If the form says you have sent too many requests, wait an hour or call IT.
 Each name can send 5 requests an hour, to stop the form being flooded.
+
+### Borrow an accessory
+
+1. Open ITrack and choose **Borrow an Accessory**.
+2. Fill in **Loaner name**, **Employee no**, **Loaner department** and
+   **Phone no**.
+3. Under **Loaned item** pick what you want to borrow. The list shows only the
+   accessory types IT has in stock right now, with how many are available.
+4. Give the **Start date** and **End date** you expect to need it, and the
+   **Reason**.
+5. Press **Send loan request**.
+
+You get a loan request number (for example **L-12**). Quote it when you contact
+IT. IT will tell you when the item is ready to collect.
 
 ### Track your request
 
@@ -64,13 +82,28 @@ set a new one.
 Press **Ctrl K** (or **Search** in the header) to jump to any page, asset or
 person by typing.
 
-### Asset Register
+### Dashboard
 
-The home page lists every IT item the company owns, live from the database.
+The home page is a summary of everything in ITrack, live from the database.
+
+- The three cards at the top count the records on **IT Inventory**,
+  **IT Accessories** and **IT Fixed Assets**. Press one to open that list.
+- **IT Inventory by status** counts devices by hardware status. Press a card to
+  open IT Inventory filtered to that status.
+- **All items by custody** counts every item as In stock, In use, In repair or
+  Loaned.
+- **Needs attention** is the same list as the bell in the header.
+- **Recently added** shows the newest records. Press one to open it.
+
+### Record lists
+
+**IT Inventory**, **IT Accessories** and **IT Fixed Assets** each list their own
+items, live from the database.
 
 - The **cards** at the top count assets by status. Press one to filter by it.
 - **Search** finds tag, serial, make, model or holder. **Filters** narrows by
-  type, status, department, location and warranty.
+  type, status, department, location and warranty. The box beside it sorts
+  **A–Z** or **Recently added**.
 - **Register asset** adds a new item. **Open / Update** (or a row) shows the full
   record: details, photos, current and past holders, and the history of every
   change.
@@ -79,15 +112,16 @@ The home page lists every IT item the company owns, live from the database.
 - **Export CSV** exports the ticked rows, or every row matching the filters if
   none are ticked.
 
-Statuses are **In stock**, **Assigned**, **Loaned**, **In repair**, **Retired**
-and **Lost/Stolen**. Assigned and Loaned are set by Allocate / Return, not by hand.
+Statuses are **In stock**, **In use**, **Loaned**, **In repair**, **Retired**
+and **Lost/Stolen**. In use and Loaned need a holder: pick **In use** on the asset form and fill in
+**Handover to** (or use Allocate / Return). An In use asset shows who has it.
 
 ### Allocate / Return
 
 Every hand-over and every return goes through this page, so the register always
 knows who holds what.
 
-**Check out** (issue an item):
+**Handover** (issue an item):
 
 1. **Asset to issue**: search by tag, serial, make or model. Only items that are
    In stock appear.
@@ -100,7 +134,7 @@ knows who holds what.
 If the person has an email address in their staff record, they receive a
 handover email asking them to confirm receipt.
 
-**Check in** (take an item back): pick the **Asset to return**, set the
+**Return** (take an item back): pick the **Asset to return**, set the
 **Returned on** date and **Condition in**, and choose where it **Goes back to**:
 In stock, or In repair.
 
@@ -110,7 +144,8 @@ Two people cannot issue the same item at once; the second gets a clear message.
 
 The queue of every open request, from the public form and from staff.
 
-- **New equipment request** raises one on someone's behalf.
+- **New equipment request** raises one on someone's behalf, with the same
+  fields as the public form.
 - **Set status…** moves a request on: Requested → Approved → Allocated →
   Delivered. Setting Delivered records the date.
 - **Assign handler…** makes an officer responsible for it.
@@ -124,6 +159,23 @@ carry **Allocate** buttons (in-stock items of the right type) and **Assign**
 buttons (officers). Pressing one opens a page that shows exactly what will
 happen and asks you to **Confirm**. Nothing happens until you press it, and
 each email link works once, for 7 days.
+
+**Loan requests.** The **Loan requests** tab lists requests to borrow an
+accessory, sent from the public loan form, with a count of those waiting. They
+also appear on the bell. **Set status…** moves one on: Requested → Approved →
+Issued → Returned. **Issue the loan** opens Allocate / Return as a loan already
+due back on the requested end date; pick the unit and the person there, then
+set the request to Issued.
+
+### Process Flow
+
+IT's procedure flowcharts, for reference: the **IT Hardware Request System**,
+the **IT Hardware Handover and Return System** (handover, and return) and
+**IT Loan Accessories** (loan, and return). Each section has a button to the
+page where that work is done. **Print** prints the charts.
+
+The page only shows the procedure. ITrack does not enforce every step on it:
+for example, the requester's HOD approval is obtained outside the system.
 
 ### Warranty & Refresh
 
@@ -154,7 +206,7 @@ every tag starting IT-02; `*` on its own lists everything.
 
 | Access level | Who | Can do |
 |---|---|---|
-| Officer (default) | IT officers | Register, Allocate / Return, Equipment Request, Asset History. |
+| Officer (default) | IT officers | Record lists, Allocate / Return, Equipment Request, Asset History. |
 | Approver | Asset custodian | Everything an officer can, plus **approve or reject a release**. |
 | Viewer | Supervisors, auditors | Read everything operational, change nothing. May still raise a request. |
 | Admin | IT manager | Everything except release decisions, plus Asset Value, Data Management, User Management and Change Log. |
@@ -235,8 +287,8 @@ reset email, because sign-in uses your ID number, not an email address.
 
 ### The item I want to issue is not in the list
 
-Only **In stock** items can be issued. Check its status on the Asset Register;
-if it is still held by someone, check it in first.
+Only **In stock** items can be issued. Check its status on its record list;
+if it is still held by someone, return it first.
 
 ### Someone did not get the handover email
 

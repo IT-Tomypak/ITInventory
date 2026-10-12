@@ -20,7 +20,9 @@ function L({ label, children, wide }) {
   );
 }
 
-export default function HardwareForm({ asset, lookups, departments, isAdmin, nextTag, onSaved, onDeleted, onCancel, onExisting }) {
+// activate: opened from the table's Status dropdown to make an unheld device
+// Active, so the status is preset and the employee is required.
+export default function HardwareForm({ asset, activate, lookups, departments, isAdmin, nextTag, onSaved, onDeleted, onCancel, onExisting }) {
   const editing = !!asset;
   const categories = lookups.categories.filter((c) => c.list === "inventory" && (c.active || c.name === asset?.asset_type));
   const findStaff = (name) => findIn(lookups.staff, name);
@@ -28,6 +30,7 @@ export default function HardwareForm({ asset, lookups, departments, isAdmin, nex
     ...hardwareValues(asset, lookups.vendors),
     asset_tag: asset?.asset_tag ?? nextTag ?? "",
     asset_type: asset?.asset_type ?? categories[0]?.name ?? "",
+    ...(activate ? { hw_status: "Active" } : {}),
   }));
   const [busy, setBusy] = useState(false);
   const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.value }));
@@ -74,6 +77,11 @@ export default function HardwareForm({ asset, lookups, departments, isAdmin, nex
         <h2 id="asset-form-title" className="text-lg font-semibold">{editing ? `Update ${asset.asset_tag}` : "Register IT hardware"}</h2>
         <QrScan onScan={scanned} onExisting={onExisting} />
       </div>
+      {activate && (
+        <p className="mb-4 rounded-lg border border-border bg-sunken px-3 py-2 text-sm">
+          An Active device needs its current user. Fill in the <strong>Employee name</strong> and their details, then save.
+        </p>
+      )}
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <L label="Names">
           <input className={inputCls} value={f.asset_tag.replace(/[-\s]*\d+$/, "")} disabled />
@@ -92,8 +100,9 @@ export default function HardwareForm({ asset, lookups, departments, isAdmin, nex
             {categories.map((c) => <option key={c.name}>{c.name}</option>)}
           </select>
         </L>
-        <L label="Employee name">
-          <input className={inputCls} value={f.employee} onChange={setEmployee} list="hw-staff" placeholder="Blank = nobody" />
+        <L label={activate ? "Employee name *" : "Employee name"}>
+          <input className={inputCls} value={f.employee} onChange={setEmployee} list="hw-staff" placeholder={activate ? "Who is using it now" : "Blank = nobody"}
+            required={activate && f.hw_status === "Active"} autoFocus={activate} />
           <datalist id="hw-staff">{lookups.staff.map((s) => <option key={s.staff_id} value={s.full_name} />)}</datalist>
           {f.employee.trim() && !known && (
             <span className="mt-1 block text-xs text-muted">{isAdmin ? "New person: saving adds them to the staff list." : "Not in the staff list."}</span>

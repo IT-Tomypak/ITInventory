@@ -1,7 +1,7 @@
 "use client";
 // Data Management — admin only. Master data is "read for authenticated,
 // write for admins" in RLS; isAdmin here only decides what is rendered.
-// Assets are edited on the Asset Register, which already owns that form
+// Assets are edited on the record lists, which already own that form
 // (photos, cost, custody rules) — one asset editor, not two.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { Boxes, Database, Download, Lock, Pencil, Plus, Save, Search } from "lucide-react";
@@ -260,8 +260,8 @@ export default function ManagePage() {
             {t.label}
           </button>
         ))}
-        <a href="/" className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm text-muted hover:text-fg">
-          <Boxes className="h-4 w-4" /> Assets → Register
+        <a href="/inventory/" className="inline-flex items-center gap-1 rounded-lg px-3 py-1.5 text-sm text-muted hover:text-fg">
+          <Boxes className="h-4 w-4" /> Assets → IT Inventory
         </a>
       </div>
       {tab === "notify_recipients" && <NotifyHealth />}

@@ -2,9 +2,10 @@
 // Create or edit one asset. Rendered only for non-viewers; the database
 // refuses a viewer's write regardless (RLS "write for non-viewers").
 import { useState } from "react";
-import { Camera, Save, X } from "lucide-react";
+import { Camera, ImagePlus, Save, X } from "lucide-react";
 import { supabase } from "../../lib/supabaseClient";
 import { LISTS, MANUAL_STATUSES } from "../../lib/assets";
+import { findStaff } from "../../lib/hardware";
 import { joinPhotos, splitPhotos, uploadPhoto } from "../../lib/photos";
 import { HoldToConfirmButton, toast } from "./ui";
 import QrScan from "./QrScan";
@@ -26,7 +27,7 @@ export default function AssetForm({ asset, lookups, list, nextTag, departments, 
   const editing = !!asset;
   // Active categories of this listing, plus the asset's own even if retired since.
   const categories = lookups.categories.filter((c) => (!list || c.list === list) && (c.active || c.name === asset?.asset_type));
-  const custody = editing && ["Assigned", "Loaned"].includes(asset.status);
+  const custody = editing && ["In use", "Loaned"].includes(asset.status);
   const [f, setF] = useState(() => ({
     asset_tag: asset?.asset_tag ?? nextTag ?? "", asset_type: asset?.asset_type ?? categories[0]?.name ?? "",
     make: asset?.make ?? "", model: asset?.model ?? "", serial_no: asset?.serial_no ?? "",
@@ -37,7 +38,10 @@ export default function AssetForm({ asset, lookups, list, nextTag, departments, 
     spec_notes: asset?.spec_notes ?? "", active: asset?.active ?? true,
     purchase_cost_rm: asset?.purchase_cost_rm ?? "",
     quantity: asset?.quantity ?? 1, plant: asset?.plant ?? "", remark: asset?.remark ?? "", item_location: asset?.item_location ?? "",
+    handover_to: "", handover_date: "",
   }));
+  // "In use" is never written directly: the handover (allocate_asset) sets it.
+  const handover = !custody && f.status === "In use";
   const [photos, setPhotos] = useState(() => splitPhotos(asset?.photo_path));
   const [busy, setBusy] = useState(false);
   const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value }));
@@ -60,6 +64,8 @@ export default function AssetForm({ asset, lookups, list, nextTag, departments, 
 
   async function save(e) {
     e.preventDefault();
+    const person = handover && findStaff(lookups.staff, f.handover_to);
+    if (handover && !person) return toast.error(`${f.handover_to.trim()} is not in the staff list. Pick a name from the list, or add them on Data Management.`);
     setBusy(true);
     const payload = {
       asset_tag: nz(f.asset_tag), asset_type: f.asset_type, make: nz(f.make), model: nz(f.model),
@@ -71,7 +77,9 @@ export default function AssetForm({ asset, lookups, list, nextTag, departments, 
       ...(list === "fixed" ? { quantity: num(f.quantity) ?? 1, plant: nz(f.plant), remark: nz(f.remark) } : {}),
     };
     // Status is sent only when it changed, so an edit never re-asserts a custody status.
-    if (!custody && f.status !== asset?.status) payload.status = f.status;
+    // A handover issues from stock, so an In repair item goes In stock first.
+    const status = handover ? "In stock" : f.status;
+    if (!custody && status !== (asset?.status ?? "In stock")) payload.status = status;
     const q = editing
       ? supabase.from("assets").update(payload).eq("asset_id", asset.asset_id).select().single()
       : supabase.from("assets").insert(payload).select().single();
@@ -84,6 +92,12 @@ export default function AssetForm({ asset, lookups, list, nextTag, departments, 
       const { error: e2 } = await supabase.from("asset_value")
         .upsert({ asset_id: data.asset_id, purchase_cost_rm: num(f.purchase_cost_rm) });
       if (e2) toast.error("Saved, but the purchase cost was not: " + e2.message);
+    }
+    if (handover) {
+      const { error: e3 } = await supabase.rpc("allocate_asset", { p_request_id: null, p_asset_id: data.asset_id,
+        p_staff_id: person.staff_id, p_issued_on: nz(f.handover_date) || undefined });
+      if (e3) toast.error("Saved, but the handover was not: " + e3.message);
+      else data.status = "In use";
     }
     setBusy(false);
     toast.success(editing ? `${data.asset_tag} updated.` : `${data.asset_tag} registered.`);
@@ -125,15 +139,25 @@ export default function AssetForm({ asset, lookups, list, nextTag, departments, 
         <L label="Status">
           {custody ? (
             <>
-              <input className={inputCls} value={f.status} disabled />
-              <span className="mt-1 block text-xs text-muted">Set by Allocate / Return while the asset is held.</span>
+              <input className={inputCls} value={`${f.status} — ${asset.holder || "?"}`} disabled />
+              <span className="mt-1 block text-xs text-muted">Held since {asset.holder_since || "?"}. Return it on Allocate / Return to change.</span>
             </>
           ) : (
             <select className={inputCls} value={f.status} onChange={set("status")}>
-              {MANUAL_STATUSES.map((s) => <option key={s}>{s}</option>)}
+              {[...MANUAL_STATUSES, "In use"].map((s) => <option key={s}>{s}</option>)}
             </select>
           )}
         </L>
+        {handover && <>
+          <L label="Handover to *">
+            <input className={inputCls} value={f.handover_to} onChange={set("handover_to")} list="handover-staff" required
+              placeholder="Who is using it" />
+            <datalist id="handover-staff">{lookups.staff.map((s) => <option key={s.staff_id} value={s.full_name} />)}</datalist>
+          </L>
+          <L label="Handover date (blank = today)">
+            <input type="date" className={inputCls} value={f.handover_date} onChange={set("handover_date")} />
+          </L>
+        </>}
         <L label="Location">
           <select className={inputCls} value={f.location_id ?? ""} onChange={set("location_id")}>
             <option value="">—</option>
@@ -185,8 +209,13 @@ export default function AssetForm({ asset, lookups, list, nextTag, departments, 
                   className="absolute -right-1.5 -top-1.5 rounded-full bg-danger p-0.5 text-white"><X className="h-3.5 w-3.5" /></button>
               </span>
             ))}
+            {/* Two inputs: Android's photo picker hides the camera when capture is absent. */}
             <label className="flex h-20 w-20 cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border text-xs text-muted hover:border-brand">
-              <Camera className="h-5 w-5" /> Add
+              <Camera className="h-5 w-5" /> Camera
+              <input type="file" accept="image/*" capture="environment" className="sr-only" onChange={addPhotos} />
+            </label>
+            <label className="flex h-20 w-20 cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border text-xs text-muted hover:border-brand">
+              <ImagePlus className="h-5 w-5" /> Gallery
               <input type="file" accept="image/*" multiple className="sr-only" onChange={addPhotos} />
             </label>
           </div>

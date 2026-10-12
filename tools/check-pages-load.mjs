@@ -46,9 +46,9 @@ for (const r of routes) {
   await page.screenshot({ path: `tools/shots/pages-load${name}.png`, fullPage: true });
   if (await page.getByText(/Error loading data/i).count()) failures.push(`${r}: shows "Error loading data"`);
   if (await page.getByText("Not found", { exact: true }).count()) failures.push(`${r}: breadcrumb says Not found`);
-  if (r === "/" && !ALLOW_EMPTY) {
+  if (r === "/inventory/" && !ALLOW_EMPTY) {
     const total = Number(await page.getByTestId("asset-total").textContent().catch(() => "0"));
-    if (!total) failures.push("/: register shows zero assets");
+    if (!total) failures.push("/inventory: list shows zero assets");
   }
   console.log((failures.some((f) => f.startsWith(r + ":")) ? "FAIL " : "ok   ") + r);
 }

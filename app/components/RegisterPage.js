@@ -1,41 +1,43 @@
 "use client";
-// Asset Register — every role reads; non-viewers edit, bulk-change and delete.
+// One record list (IT Inventory, IT Accessories or IT Fixed Assets) — every
+// role reads; non-viewers edit, bulk-change and delete.
 // Live from the database on every visit, no cached copy.
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle, Archive, ArrowLeftRight, CheckCircle2, ChevronDown, ChevronRight, Download, Filter, Package,
-  FileUp, Pencil, Plus, Search, Tags, Timer, UserCheck, Wallet, Wrench, X,
+  FileUp, Pencil, Plus, Search, Tags, Timer, UserCheck, Wrench, X,
 } from "lucide-react";
-import { supabase } from "../lib/supabaseClient";
-import { HW_STATUSES, LISTS, ASSET_STATUSES, MANUAL_STATUSES, WARRANTY_STATES, fmtDate, fmtRM, loadRegister } from "../lib/assets";
-import { downloadCsv } from "../lib/csv";
-import { downloadXlsx } from "../lib/xlsx";
-import { useAuth } from "./components/AuthProvider";
-import AssetDetail from "./components/AssetDetail";
-import AssetForm, { inputCls } from "./components/AssetForm";
-import HardwareForm from "./components/HardwareForm";
-import HardwareImport from "./components/HardwareImport";
+import { supabase } from "../../lib/supabaseClient";
+import { HW_STATUSES, LISTS, ASSET_STATUSES, MANUAL_STATUSES, WARRANTY_STATES, fmtDate, fmtRM, loadRegister } from "../../lib/assets";
+import { downloadCsv } from "../../lib/csv";
+import { downloadXlsx } from "../../lib/xlsx";
+import { useAuth } from "./AuthProvider";
+import AssetDetail from "./AssetDetail";
+import AssetForm, { inputCls } from "./AssetForm";
+import HardwareForm from "./HardwareForm";
+import HardwareImport from "./HardwareImport";
 import {
   Card, EmptyState, HoldToConfirmButton, KpiCard, KpiSkeleton, ModalPortal, PageHeader, Pagination,
   SortableTh, StatusBadge, TableSkeleton, cn, toast,
-} from "./components/ui";
+} from "./ui";
 
-const LIST_ROUTES = { inventory: "inventory", accessory: "accessories", fixed: "fixed-assets" };
+export const LIST_ROUTES = { inventory: "inventory", accessory: "accessories", fixed: "fixed-assets" };
 const STATUS_KPIS = [
   { status: "In stock", icon: CheckCircle2, tone: "ok" },
-  { status: "Assigned", icon: UserCheck, tone: "info" },
+  { status: "In use", icon: UserCheck, tone: "info" },
   { status: "In repair", icon: Wrench, tone: "warn" },
   { status: "Loaned", icon: Timer, tone: "brand" },
   { status: "Retired", icon: Archive, tone: "muted" },
   { status: "Lost/Stolen", icon: AlertTriangle, tone: "danger" },
 ];
 // The two listings are a plain inventory view: no write-off counts, no money.
-const LISTING_KPIS = STATUS_KPIS.filter((s) => !["Retired", "Lost/Stolen"].includes(s.status));
+export const LISTING_KPIS = STATUS_KPIS.filter((s) => !["Retired", "Lost/Stolen"].includes(s.status));
 // IT Hardware counts its own status words (assets.hw_status), not custody status.
-const HW_KPIS = [
+export const HW_KPIS = [
   { status: "Registered", icon: Package, tone: "brand" },
   { status: "Active", icon: UserCheck, tone: "info" },
   { status: "Handover", icon: ArrowLeftRight, tone: "warn" },
+  { status: "Returned", icon: Archive, tone: "muted" },
   { status: "Repair", icon: Wrench, tone: "warn" },
   { status: "Vacant", icon: CheckCircle2, tone: "ok" },
 ];
@@ -53,6 +55,12 @@ const HW_COLUMNS = [
   ["Anydesk_id", "anydesk_id"], ["Special_app", "special_app"], ["App_licenses", "app_licenses"],
   ["Batch_number", "batch_number"], ["Vendor_name", "vendor"], ["__PowerAppsId__", "powerapps_id"],
 ];
+// What the IT Inventory table shows. The export and the detail pop-up keep
+// every sheet column (HW_COLUMNS).
+const HW_TABLE = [
+  ["Device Name", "asset_tag"], ["Status", "hw_status", (r) => <StatusBadge status={r.hw_status} />],
+  ["Employee Name", "holder"], ["Model", "model"], ["Serial number", "serial_no"],
+];
 // IT Fixed Assets: Finance's fixed-asset register (FAR) headers. Cost is
 // admin-only (RLS), so its column is added for admins only.
 const FA_COLUMNS = [
@@ -63,27 +71,25 @@ const FA_COLUMNS = [
 ];
 const FA_COST = ["Cost c/f", "purchase_cost_rm", (r) => r.purchase_cost_rm != null && fmtRM(r.purchase_cost_rm)];
 const KPI_GRID = { 4: "sm:grid-cols-4", 5: "sm:grid-cols-3 xl:grid-cols-5", 6: "sm:grid-cols-3 xl:grid-cols-6", 7: "sm:grid-cols-3 xl:grid-cols-7" };
-// Shortcut to /allocate for assets that can move: in stock (check out) or held (check in).
+// Shortcut to /allocate for assets that can move: in stock (handover) or held (return).
 const custodyHref = (r) => (r.holder || (r.status === "In stock" && r.active) ? `/allocate/?asset=${r.asset_id}` : null);
-const custodyLabel = (r) => (r.holder ? "Check in" : "Check out");
+const custodyLabel = (r) => (r.holder ? "Return" : "Handover");
 
 const EMPTY_FILTERS = { q: "", type: "", status: "", department: "", location: "", warranty: "", from: "", to: "" };
 
-// `list` ("inventory" | "accessory") narrows the page to one listing; unset = every asset.
-// On the full register (no `list`) two buttons switch between the listings.
-const REGISTER_VIEWS = [["inventory", "Hardware"], ["accessory", LISTS.accessory], ["fixed", LISTS.fixed]];
+// `list` ("inventory" | "accessory" | "fixed") is the listing this page shows.
 
 export default function RegisterPage({ list }) {
   // isViewer/isAdmin only decide what is RENDERED. RLS refuses a viewer's
   // write and hides cost from non-admins whatever this page does.
   const { isViewer, isAdmin } = useAuth();
-  const [view, setView] = useState("inventory");
-  const cur = list || view;
+  const cur = list;
   const hw = cur === "inventory";
   const statusOf = (r) => (hw ? r.hw_status : r.status);
   const fx = cur === "fixed";
   // Sheet-shaped listings get their own columns, an Excel export and a pop-up detail.
   const columns = hw ? HW_COLUMNS : fx ? [...FA_COLUMNS, ...(isAdmin ? [FA_COST] : [])] : null;
+  const tableColumns = hw ? HW_TABLE : columns;
   const [data, setData] = useState(null);
   const [error, setError] = useState(null);
   const [filters, setFilters] = useState(EMPTY_FILTERS);
@@ -108,10 +114,11 @@ export default function RegisterPage({ list }) {
   }, [isAdmin]);
   useEffect(reload, [reload]);
 
-  // Deep link from the command palette: /?q=IT-0241
+  // Deep links: ?q=TPLL001 (a scan) and ?status=Vacant (a dashboard card).
   useEffect(() => {
-    const q = new URLSearchParams(window.location.search).get("q");
-    if (q) setFilters((f) => ({ ...f, q }));
+    const p = new URLSearchParams(window.location.search);
+    const q = p.get("q"), status = p.get("status");
+    if (q || status) setFilters((f) => ({ ...f, ...(q && { q }), ...(status && { status }) }));
   }, []);
   // ...&open=1 (a scan that found the serial in another listing): open its detail once.
   useEffect(() => {
@@ -196,6 +203,16 @@ export default function RegisterPage({ list }) {
     reload();
   }
 
+  // The Status dropdown in an IT Inventory row. Active means someone is using
+  // the device, so a device nobody holds opens the form to name them first.
+  async function changeHwStatus(r, status) {
+    if (status === "Active" && !r.holder) return setModal({ mode: "edit", asset: r, activate: true });
+    const { error } = await supabase.from("assets").update({ hw_status: status }).eq("asset_id", r.asset_id);
+    if (error) return toast.error(error.message);
+    toast.success(`${r.asset_tag} set to ${status}.`);
+    reload();
+  }
+
   async function bulkDelete() {
     const ids = [...selected];
     const { error } = await supabase.from("assets").delete().in("asset_id", ids);
@@ -213,18 +230,12 @@ export default function RegisterPage({ list }) {
     const r = data.rows.find((a) => a.serial_no?.toUpperCase().split(/\s*\/\s*/).includes(s));
     if (!r) return false;
     toast.success(`Serial ${serial} is already registered as ${r.asset_tag}.`);
-    if (list && r.list !== list) {
-      window.location.assign(`/${LIST_ROUTES[r.list]}/?q=${encodeURIComponent(r.asset_tag)}&open=1`);
-    } else {
-      setView(r.list);
-      setModal({ mode: "detail", asset: r });
-    }
+    if (r.list !== list) window.location.assign(`/${LIST_ROUTES[r.list]}/?q=${encodeURIComponent(r.asset_tag)}&open=1`);
+    else setModal({ mode: "detail", asset: r });
     return true;
   }
   const afterSave = () => { closeModal(); reload(); };
-  const totalBook = isAdmin && data ? rows.reduce((s, r) => s + (r.book_value || 0), 0) : null;
-  const kpis = hw ? HW_KPIS : fx ? [] : list ? LISTING_KPIS : STATUS_KPIS;
-  const showBook = isAdmin && !list;
+  const kpis = hw ? HW_KPIS : fx ? [] : LISTING_KPIS;
   // Next free tag in this listing's series, e.g. HW-004 after HW-003.
   const nextTag = useMemo(() => {
     const prefix = hw ? "HW-" : fx ? null : "ACC-"; // fixed assets are tagged by their F/A Code
@@ -235,11 +246,10 @@ export default function RegisterPage({ list }) {
 
   return (
     <>
-      <PageHeader title={LISTS[list] || "Asset Register"} help="asset-register"
-        subtitle={list ? `Everything filed under ${LISTS[list]} categories, live from the database.`
-          : "Every IT hardware item the company owns, live from the database."}
+      <PageHeader title={LISTS[list]} help="record-lists"
+        subtitle={`Everything filed under ${LISTS[list]} categories, live from the database.`}
         actions={<>
-          {isAdmin && list && (
+          {isAdmin && (
             <a href="/manage/" className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-2 text-sm">
               <Tags className="h-4 w-4" /> Categories
             </a>
@@ -264,27 +274,14 @@ export default function RegisterPage({ list }) {
 
       {error && <Card className="mb-4 p-4 text-danger" role="alert">Error loading data: {error}</Card>}
 
-      {!list && (
-        <div className="mb-4 flex gap-1 rounded-xl border border-border bg-surface p-1" role="tablist" aria-label="Listing">
-          {REGISTER_VIEWS.map(([k, label]) => (
-            <button key={k} role="tab" aria-selected={view === k}
-              onClick={() => { setView(k); setFilters((f) => ({ ...f, type: "", status: "" })); setPage(1); setSelected(new Set()); }}
-              className={cn("flex-1 rounded-lg px-4 py-2 text-sm sm:flex-none", view === k ? "bg-brand/10 font-medium text-brand" : "text-muted hover:text-fg")}>
-              {label}
-            </button>
-          ))}
-        </div>
-      )}
-
       {!data && !error ? <KpiSkeleton count={kpis.length} /> : data && (
-        <div className={cn("grid grid-cols-2 gap-3", KPI_GRID[kpis.length + (showBook ? 1 : 0)])}>
+        <div className={cn("grid grid-cols-2 gap-3", KPI_GRID[kpis.length])}>
           {kpis.map((s) => (
             <KpiCard key={s.status} label={s.status} icon={s.icon} tone={s.tone}
               value={rows.filter((r) => statusOf(r) === s.status).length}
               active={filters.status === s.status}
               onClick={() => setFilter("status", filters.status === s.status ? "" : s.status)} />
           ))}
-          {showBook && <KpiCard label="Book value" icon={Wallet} tone="brand" value={"RM " + Math.round(totalBook).toLocaleString("en-MY")} />}
         </div>
       )}
 
@@ -295,6 +292,14 @@ export default function RegisterPage({ list }) {
             <input className={cn(inputCls, "pl-9")} placeholder="Search tag, serial, make, model, holder or location"
               value={filters.q} onChange={(e) => setFilter("q", e.target.value)} aria-label="Search assets" />
           </div>
+          {/* Drives the same sort state as the column headers; asset_id rises with each new record. */}
+          <select aria-label="Sort" className={cn(inputCls, "w-auto")}
+            value={sort.field === "asset_id" ? "recent" : sort.field === "asset_tag" && sort.dir === "asc" ? "az" : "column"}
+            onChange={(e) => { setSort(e.target.value === "recent" ? { field: "asset_id", dir: "desc" } : { field: "asset_tag", dir: "asc" }); setPage(1); }}>
+            <option value="az">A–Z</option>
+            <option value="recent">Recently added</option>
+            <option value="column" hidden>By column</option>
+          </select>
           <button onClick={() => setShowFilters((s) => !s)} aria-expanded={showFilters}
             className={cn("inline-flex items-center gap-1.5 rounded-lg border px-3 text-sm", activeFilterCount ? "border-brand text-brand" : "border-border")}>
             <Filter className="h-4 w-4" /><span className="hidden sm:inline">Filters</span>{activeFilterCount > 0 && ` (${activeFilterCount})`}
@@ -397,7 +402,7 @@ export default function RegisterPage({ list }) {
                   <thead className="border-b border-border">
                     <tr>
                       <th className="w-8 px-2"><input type="checkbox" aria-label="Select all on this page" checked={allOnPage} onChange={togglePage} /></th>
-                      {columns ? columns.map(([label, field]) => (
+                      {tableColumns ? tableColumns.map(([label, field]) => (
                         <SortableTh key={field} label={label} field={field} sort={sort} setSort={setSort} className="whitespace-nowrap" />
                       )) : <>
                       <SortableTh label="Tag" field="asset_tag" sort={sort} setSort={setSort} />
@@ -419,9 +424,15 @@ export default function RegisterPage({ list }) {
                         <Fragment key={r.asset_id}>
                           <tr className={cn("border-b border-border hover:bg-sunken", open && "bg-sunken")}>
                             <td className="px-2"><input type="checkbox" aria-label={`Select ${r.asset_tag}`} checked={selected.has(r.asset_id)} onChange={() => toggle(r.asset_id)} /></td>
-                            {columns ? columns.map(([label, field, cell], i) => (
+                            {tableColumns ? tableColumns.map(([label, field, cell], i) => (
                               <td key={field} className={cn("px-3 py-2", field === "asset_tag" ? "whitespace-nowrap font-medium" : field === "remark" || (fx && field === "model") ? "min-w-[16rem]" : "whitespace-nowrap")}>
-                                {(cell ? cell(r) : r[field]) || <span className="text-muted">—</span>}
+                                {field === "hw_status" && !isViewer ? (
+                                  <select aria-label={`Status of ${r.asset_tag}`} value={r.hw_status ?? ""} onChange={(e) => changeHwStatus(r, e.target.value)}
+                                    className="rounded-lg border border-border bg-surface px-2 py-1 text-sm">
+                                    {!r.hw_status && <option value="" disabled>—</option>}
+                                    {HW_STATUSES.map((s) => <option key={s}>{s}</option>)}
+                                  </select>
+                                ) : (cell ? cell(r) : r[field]) || <span className="text-muted">—</span>}
                               </td>
                             )) : <>
                             <td className="whitespace-nowrap px-3 py-2 font-medium">{r.asset_tag}{!r.active && <span className="ml-1 text-xs text-muted">(inactive)</span>}</td>
@@ -460,7 +471,7 @@ export default function RegisterPage({ list }) {
                           </tr>
                           {open && (
                             <tr className="border-b border-border bg-sunken/50">
-                              <td colSpan={columns ? columns.length + 2 : 10} className="px-4 py-4">
+                              <td colSpan={tableColumns ? tableColumns.length + 2 : 10} className="px-4 py-4">
                                 <AssetDetail asset={r} lookups={data.lookups} showCost={isAdmin} />
                               </td>
                             </tr>
@@ -508,7 +519,7 @@ export default function RegisterPage({ list }) {
         )}
         {modal?.mode === "import" && isAdmin && <HardwareImport data={data} isAdmin={isAdmin} onDone={reload} onClose={closeModal} />}
         {(modal?.mode === "edit" || modal?.mode === "new") && !isViewer && (
-          hw ? <HardwareForm asset={modal.asset} lookups={data.lookups} departments={departments} isAdmin={isAdmin} nextTag={nextTag}
+          hw ? <HardwareForm asset={modal.asset} activate={modal.activate} lookups={data.lookups} departments={departments} isAdmin={isAdmin} nextTag={nextTag}
             onSaved={afterSave} onDeleted={afterSave} onCancel={closeModal} onExisting={modal.asset ? undefined : showExisting} />
           : <AssetForm asset={modal.asset} lookups={data.lookups} list={cur} nextTag={nextTag} departments={departments} isAdmin={isAdmin}
             onSaved={afterSave} onDeleted={afterSave} onCancel={closeModal} onExisting={modal.asset ? undefined : showExisting} />

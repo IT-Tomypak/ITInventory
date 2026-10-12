@@ -21,12 +21,13 @@ function L({ label, children, className }) {
 }
 
 /**
- * onSubmit({ name, department, asset_type, urgency, justification }, files)
+ * onSubmit({ name, email, employee_no, department, hod, services, urgency, justification }, files)
+ * hods: the names the HOD box offers (IT's list); the value must be one of them.
  * must resolve to a receipt object, or throw an Error whose message is shown
  * to the person as-is (so make it human).
  */
-export function RequestForm({ defaultName = "", defaultDepartment = "", onSubmit, onDone }) {
-  const [f, setF] = useState({ name: defaultName, department: defaultDepartment, asset_type: "Laptop", urgency: "Normal", justification: "" });
+export function RequestForm({ defaultName = "", defaultDepartment = "", hods = [], onSubmit, onDone }) {
+  const [f, setF] = useState({ name: defaultName, email: "", employee_no: "", department: defaultDepartment, hod: "", services: [], urgency: "Normal", justification: "" });
   const [files, setFiles] = useState([]); // { file, url }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -40,14 +41,20 @@ export function RequestForm({ defaultName = "", defaultDepartment = "", onSubmit
     setFiles((cur) => [...cur, ...picked.map((file) => ({ file, url: URL.createObjectURL(file) }))].slice(0, MAX_PHOTOS));
   }
 
+  const toggleService = (t) => setF((s) => ({ ...s, services: s.services.includes(t) ? s.services.filter((x) => x !== t) : [...s.services, t] }));
+
   async function submit(e) {
     e.preventDefault();
+    // Typed or picked, the HOD must be a name on the list: that is what pairs it with an email.
+    const hod = hods.find((h) => h.toLowerCase() === f.hod.trim().toLowerCase());
+    if (!hod) return setError("Choose your HOD from the list. Start typing the name and pick the match.");
+    if (!f.services.length) return setError("Tick at least one item under Request for Service(s).");
     setBusy(true);
     setError("");
     try {
       const receipt = await onSubmit({
-        name: f.name.trim(), department: f.department.trim(), asset_type: f.asset_type,
-        urgency: f.urgency, justification: f.justification.trim(),
+        name: f.name.trim(), email: f.email.trim(), employee_no: f.employee_no.trim(), department: f.department.trim(), hod,
+        services: f.services, urgency: f.urgency, justification: f.justification.trim(),
       }, files.map((x) => x.file));
       onDone(receipt);
     } catch (err) {
@@ -60,13 +67,31 @@ export function RequestForm({ defaultName = "", defaultDepartment = "", onSubmit
   return (
     <form onSubmit={submit} className="space-y-4">
       <div className="grid gap-4 sm:grid-cols-2">
-        <L label="Your name *"><input className={inputCls} value={f.name} onChange={set("name")} required maxLength={100} autoComplete="name" /></L>
-        <L label="Department *"><input className={inputCls} value={f.department} onChange={set("department")} required maxLength={100} /></L>
-        <L label="What do you need? *">
-          <select className={inputCls} value={f.asset_type} onChange={set("asset_type")}>
-            {ASSET_TYPES.map((t) => <option key={t}>{t}</option>)}
-          </select>
+        <L label="Requester name *"><input className={inputCls} value={f.name} onChange={set("name")} required maxLength={100} autoComplete="name" /></L>
+        <L label="Employee no *"><input className={inputCls} value={f.employee_no} onChange={set("employee_no")} required maxLength={30} /></L>
+        <L label="Your email *">
+          <input type="email" className={inputCls} value={f.email} onChange={set("email")} required maxLength={200} autoComplete="email"
+            placeholder="name@tomypak.com.my" />
+          <span className="mt-1 block text-xs text-muted">Updates on this request are sent here.</span>
         </L>
+        <L label="Department *"><input className={inputCls} value={f.department} onChange={set("department")} required maxLength={100} /></L>
+        <L label="HOD Department *">
+          {/* A native combo box: the list drops down and narrows as the person types. */}
+          <input className={inputCls} value={f.hod} onChange={set("hod")} required list="hod-list" autoComplete="off"
+            placeholder="Type or choose your Head of Department" />
+          <datalist id="hod-list">{hods.map((h) => <option key={h} value={h} />)}</datalist>
+        </L>
+        <fieldset className="sm:col-span-2">
+          <legend className="mb-1 block text-sm font-medium">Request for Service(s) * <span className="font-normal text-muted">(tick all that apply)</span></legend>
+          <div className="grid grid-cols-2 gap-2 sm:grid-cols-5">
+            {ASSET_TYPES.map((t) => (
+              <label key={t} className={cn("flex cursor-pointer items-center gap-2 rounded-lg border px-3 py-2 text-sm",
+                f.services.includes(t) ? "border-brand bg-brand/10 font-medium text-brand" : "border-border")}>
+                <input type="checkbox" checked={f.services.includes(t)} onChange={() => toggleService(t)} /> {t}
+              </label>
+            ))}
+          </div>
+        </fieldset>
         <div>
           <span className="mb-1 block text-sm font-medium">Urgency</span>
           <div className="flex gap-2">
@@ -80,7 +105,7 @@ export function RequestForm({ defaultName = "", defaultDepartment = "", onSubmit
           </div>
         </div>
       </div>
-      <L label="Why do you need it?">
+      <L label="Description (optional)">
         <textarea rows={4} className={inputCls} value={f.justification} onChange={set("justification")} maxLength={2000}
           placeholder="e.g. My laptop no longer charges; I need one for month-end closing." />
         <span className="mt-1 block text-right text-xs text-muted">{f.justification.length} / 2000</span>
@@ -136,10 +161,10 @@ export function downloadReceipt(r) {
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
 }
 
-/** receipt = { requestId, createdAt, name, department, assetType, urgency, photoCount, justification } */
+/** receipt = { requestId, createdAt, name, employeeNo, department, hod, assetType (every service asked for), urgency, photoCount, justification } */
 export function RequestReceipt({ receipt: r, onAnother }) {
-  const rows = [["Requested by", r.name], ["Department", r.department], ["Asset type", r.assetType],
-    ["Urgency", r.urgency], ["Photos attached", r.photoCount]];
+  const rows = [["Requested by", r.name], ["Employee no", r.employeeNo || "-"], ["Department", r.department], ["HOD", r.hod || "-"],
+    ["Request for", r.assetType], ["Urgency", r.urgency], ["Photos attached", r.photoCount]];
   return (
     <div className="mx-auto max-w-md">
       <div className="overflow-hidden rounded-2xl border border-border bg-surface shadow-sm" data-testid="receipt">
@@ -162,7 +187,7 @@ export function RequestReceipt({ receipt: r, onAnother }) {
           {r.justification && (
             <>
               <hr className="my-4 border-dashed border-border" />
-              <p className="text-xs text-muted">Justification</p>
+              <p className="text-xs text-muted">Description</p>
               <p className="mt-1 whitespace-pre-line break-words text-sm">{r.justification}</p>
             </>
           )}

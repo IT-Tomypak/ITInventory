@@ -4,9 +4,19 @@ ITrack is Tomypak's IT asset register: every hardware item the company owns,
 who holds it, what it cost, and every request for new equipment. It runs in any
 browser, on a phone as well as a desktop, with light and dark themes.
 
-## Asset register
+## Dashboard
 
-- One live list of every asset, with counts by status: In stock, Assigned,
+- The home page: record counts for the three lists, IT Inventory by hardware
+  status, custody counts, what needs attention and the newest records.
+
+## Process Flow
+
+- IT's procedure flowcharts (hardware request, handover and return, accessory
+  loans) on one page, for reference, with links to the modules that do the work.
+
+## Record lists
+
+- IT Inventory, IT Accessories and IT Fixed Assets: one live list each, with counts by status: In stock, In use,
   Loaned, In repair, Retired, Lost/Stolen.
 - Search by tag, serial, make, model or holder; filter by type, status,
   department, location and warranty.
@@ -19,8 +29,8 @@ browser, on a phone as well as a desktop, with light and dark themes.
 
 ## Allocation and return
 
-- Check out to a person or a location, with condition notes and an optional due
-  date (a loan). Check in with condition notes, back to stock or to repair.
+- Handover to a person or a location, with condition notes and an optional due
+  date (a loan). Return with condition notes, back to stock or to repair.
 - Each movement is one atomic database operation: two people cannot issue the
   same item at once.
 - The value of an item is recorded at the moment of issue, so history does not
@@ -28,8 +38,12 @@ browser, on a phone as well as a desktop, with light and dark themes.
 
 ## Equipment requests
 
-- A public request form that needs no login, with up to 4 photos (camera on a
-  phone), and a printable PDF receipt with a request number.
+- A public request form that needs no login: requester name, employee no,
+  own email, department, HOD (picked from IT's list), one or more services, an optional description and up to 4
+  photos (camera on a phone), with a printable PDF receipt and request number.
+- A public loan accessories request: loaner name, employee no, department,
+  phone, an accessory type that has stock, reason, and start and end dates. IT
+  works them from the Loan requests tab on Equipment Request.
 - Public status tracking by request number. It shows status and dates only: no
   names, costs or internal notes.
 - An internal queue for IT: status, handler, allocation, delivery.

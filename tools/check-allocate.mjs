@@ -50,7 +50,7 @@ try {
   const open = await a.from("asset_assignment").select("assignment_id").eq("asset_id", assetId).is("returned_on", null);
   check(open.data?.length === 1, "one open assignment in the database");
   const st = await a.from("assets").select("status").eq("asset_id", assetId).single();
-  check(st.data?.status === "Assigned", "asset status is Assigned");
+  check(st.data?.status === "In use", "asset status is In use");
 
   const ret = await a.rpc("return_asset", { p_asset_id: assetId, p_condition_in: "Good" });
   check(!ret.error, "return_asset succeeded" + (ret.error ? `: ${ret.error.message}` : ""));

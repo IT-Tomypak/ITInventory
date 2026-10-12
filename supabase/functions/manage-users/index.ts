@@ -103,7 +103,7 @@ Deno.serve(async (req) => {
     const targetName = (u: User | null, fallback = "") => u?.user_metadata?.full_name || (u ? idOf(u) : fallback);
 
     if (body.action === "set_password") {
-      if (String(body.password ?? "").length < 8) return json({ error: "Passwords must be at least 8 characters." });
+      if (String(body.password ?? "").length < 6) return json({ error: "Passwords must be at least 6 characters." });
       const { error } = await admin.auth.admin.updateUserById(target.id, { password: body.password });
       if (error) return json({ error: error.message });
       await audit(caller, actorName, "user_password_reset", target, targetName(target), "password set by an administrator");
@@ -136,8 +136,8 @@ Deno.serve(async (req) => {
 
       let user = target;
       if (!target) {
-        if (!/^[A-Za-z0-9._-]+$/.test(idNumber)) return json({ error: "The ID number may contain only letters, digits, dot, dash and underscore." });
-        if (String(body.password ?? "").length < 8) return json({ error: "Passwords must be at least 8 characters." });
+        if (!/^\d{6}$/.test(idNumber)) return json({ error: "The ID number must be exactly 6 digits." });
+        if (String(body.password ?? "").length < 6) return json({ error: "Passwords must be at least 6 characters." });
         const { data, error } = await admin.auth.admin.createUser({
           email: `${idNumber}@${INTERNAL_DOMAIN}`, password: body.password, email_confirm: true,
           user_metadata: { full_name: fullName }, app_metadata: { role: role || null },

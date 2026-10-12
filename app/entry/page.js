@@ -1,11 +1,12 @@
 "use client";
-// Equipment Request — the internal request form, the request queue, and the
-// release approval box. Viewers may RAISE a request (RLS "insert for
+// Equipment Request — the internal request form, the request queue, the
+// release approval box, and the queue of loan accessories requests (raised on
+// the public /loan page). Viewers may RAISE a request (RLS "insert for
 // authenticated") but change nothing. Only approvers see the decision box,
 // and trg_guard_asset_release refuses anyone else's decision regardless.
 import { useCallback, useEffect, useMemo, useState } from "react";
 import {
-  ArrowLeftRight, CheckCircle2, ClipboardList, Download, Hand, Plus, Search, ShieldCheck, X, XCircle,
+  ArrowLeftRight, CheckCircle2, ClipboardList, Download, Hand, Plus, Search, ShieldCheck, Timer, X, XCircle,
 } from "lucide-react";
 import { supabase } from "../../lib/supabaseClient";
 import { fetchAll, fmtDate, fmtDateTime } from "../../lib/assets";
@@ -19,9 +20,15 @@ const OPEN = ["Requested", "Approved", "Allocated"];
 const STATUS_CHOICES = { Requested: ["Approved", "Rejected", "Cancelled"], Approved: ["Requested", "Rejected", "Cancelled"],
   Allocated: ["Delivered"], Delivered: [], Rejected: ["Requested"], Cancelled: ["Requested"] };
 
+// Loan accessories requests move by hand: IT issues the unit on Allocate / Return.
+const LOAN_CHOICES = { Requested: ["Approved", "Rejected", "Cancelled"], Approved: ["Issued", "Rejected", "Cancelled"],
+  Issued: ["Returned"], Returned: [], Rejected: ["Requested"], Cancelled: ["Requested"] };
+const LOAN_OPEN = ["Requested", "Approved", "Issued"];
+
 const toReceipt = (r) => ({
-  requestId: r.request_id, createdAt: r.created_at, name: r.requested_by_name, department: r.department,
-  assetType: r.asset_type, urgency: r.urgency, photoCount: splitPhotos(r.attachment_path).length, justification: r.justification,
+  requestId: r.request_id, createdAt: r.created_at, name: r.requested_by_name, employeeNo: r.employee_no,
+  department: r.department, hod: r.hod,
+  assetType: r.services || r.asset_type, urgency: r.urgency, photoCount: splitPhotos(r.attachment_path).length, justification: r.justification,
 });
 
 // The decision. Retyping one's own ID number is a signature, not a password:
@@ -83,7 +90,15 @@ function RequestCard({ r, staff, assetTag, canEdit, canDecide, idNumber, onChang
         {r.release_status && <span className="text-xs text-muted">Release: <StatusBadge status={r.release_status} /></span>}
         <span className="ml-auto text-xs text-muted">{fmtDateTime(r.created_at)}</span>
       </div>
-      <p className="mt-1 text-sm"><span className="font-medium">{r.requested_by_name}</span> · {r.department} · needs a <span className="font-medium">{r.asset_type}</span></p>
+      <p className="mt-1 text-sm">
+        <span className="font-medium">{r.requested_by_name}</span>{r.employee_no && ` (${r.employee_no})`} · {r.department}
+        {r.hod && <> · HOD {r.hod}</>} · requests <span className="font-medium">{r.services || r.asset_type}</span>
+      </p>
+      {(r.requester_email || r.hod_email) && (
+        <p className="mt-1 text-xs text-muted">
+          {r.requester_email && <>Requester: {r.requester_email}</>}{r.requester_email && r.hod_email && " · "}{r.hod_email && <>HOD: {r.hod_email}</>}
+        </p>
+      )}
       {r.justification && <p className="mt-1 whitespace-pre-line break-words text-sm text-muted">{r.justification}</p>}
       {photos.length > 0 && (
         <div className="mt-2 flex gap-2">
@@ -143,10 +158,51 @@ function RequestCard({ r, staff, assetTag, canEdit, canDecide, idNumber, onChang
   );
 }
 
+function LoanCard({ l, canEdit, onChanged }) {
+  const setStatus = async (status) => {
+    const { error } = await supabase.from("loan_request").update({ status }).eq("loan_id", l.loan_id);
+    if (error) return toast.error(error.message);
+    toast.success(`Loan request L-${l.loan_id} is now ${status}.`);
+    onChanged();
+  };
+  return (
+    <li className="rounded-xl border border-border bg-surface p-3 sm:p-4" data-testid={`loan-${l.loan_id}`}>
+      <div className="flex flex-wrap items-center gap-2">
+        <span className="text-lg font-semibold">L-{l.loan_id}</span>
+        <StatusBadge status={l.status} />
+        <span className="ml-auto text-xs text-muted">{fmtDateTime(l.created_at)}</span>
+      </div>
+      <p className="mt-1 text-sm">
+        <span className="font-medium">{l.loaner_name}</span> ({l.employee_no}) · {l.department} · {l.phone} · wants to borrow a <span className="font-medium">{l.item_type}</span>
+      </p>
+      <p className="mt-1 text-sm">{fmtDate(l.start_on)} to {fmtDate(l.end_on)}</p>
+      <p className="mt-1 whitespace-pre-line break-words text-sm text-muted">{l.reason}</p>
+      {canEdit && (
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          {LOAN_CHOICES[l.status].length > 0 && (
+            <select aria-label={`Change status of loan request ${l.loan_id}`} className={cn(inputCls, "w-auto py-1.5")} value=""
+              onChange={(e) => e.target.value && setStatus(e.target.value)}>
+              <option value="">Set status…</option>
+              {LOAN_CHOICES[l.status].map((s) => <option key={s}>{s}</option>)}
+            </select>
+          )}
+          {["Requested", "Approved"].includes(l.status) && (
+            <a href={`/allocate/?due=${l.end_on}`} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm">
+              <ArrowLeftRight className="h-4 w-4" /> Issue the loan
+            </a>
+          )}
+        </div>
+      )}
+    </li>
+  );
+}
+
 export default function EntryPage() {
   const { isViewer, isApprover, idNumber, fullName } = useAuth();
   const [rows, setRows] = useState(null);
+  const [loans, setLoans] = useState([]);
   const [staff, setStaff] = useState([]);
+  const [hods, setHods] = useState([]); // { name, email }: IT's HOD list
   const [tags, setTags] = useState(new Map());
   const [error, setError] = useState(null);
   const [view, setView] = useState("queue");
@@ -156,13 +212,17 @@ export default function EntryPage() {
 
   const reload = useCallback(async () => {
     try {
-      const [reqs, st, assets] = await Promise.all([
+      const [reqs, lns, st, assets, hd] = await Promise.all([
         fetchAll(() => supabase.from("equipment_request").select("*").order("request_id")),
+        fetchAll(() => supabase.from("loan_request").select("*").order("loan_id")),
         fetchAll(() => supabase.from("staff").select("staff_id, full_name, department, login_id").order("full_name")),
         fetchAll(() => supabase.from("assets").select("asset_id, asset_tag").order("asset_id")),
+        fetchAll(() => supabase.from("hod").select("name, email").eq("active", true).order("name")),
       ]);
       setRows(reqs);
+      setLoans(lns);
       setStaff(st);
+      setHods(hd);
       setTags(new Map(assets.map((a) => [a.asset_id, a.asset_tag])));
       setError(null);
     } catch (e) {
@@ -171,7 +231,8 @@ export default function EntryPage() {
   }, []);
   useEffect(() => { reload(); }, [reload]);
   useEffect(() => {
-    if (new URLSearchParams(window.location.search).get("view") === "approvals") setView("approvals");
+    const v = new URLSearchParams(window.location.search).get("view");
+    if (["approvals", "loans"].includes(v)) setView(v);
   }, []);
 
   const me = staff.find((s) => s.login_id === idNumber);
@@ -180,14 +241,22 @@ export default function EntryPage() {
   const shown = useMemo(() => {
     const t = q.trim().toLowerCase().replace(/^#/, "");
     return (view === "approvals" ? pending : (rows ?? []).filter((r) => showClosed || OPEN.includes(r.status)))
-      .filter((r) => !t || String(r.request_id) === t || [r.requested_by_name, r.department, r.asset_type].some((v) => v?.toLowerCase().includes(t)))
+      .filter((r) => !t || String(r.request_id) === t || [r.requested_by_name, r.employee_no, r.department, r.services, r.asset_type].some((v) => v?.toLowerCase().includes(t)))
       .sort((a, b) => (b.urgency === "Urgent") - (a.urgency === "Urgent") || a.created_at.localeCompare(b.created_at));
   }, [rows, pending, view, showClosed, q]);
+  const shownLoans = useMemo(() => {
+    const t = q.trim().toLowerCase().replace(/^l-/, "");
+    return loans.filter((l) => showClosed || LOAN_OPEN.includes(l.status))
+      .filter((l) => !t || String(l.loan_id) === t || [l.loaner_name, l.employee_no, l.department, l.item_type].some((v) => v?.toLowerCase().includes(t)));
+  }, [loans, showClosed, q]);
+  const loansWaiting = loans.filter((l) => l.status === "Requested").length;
 
   async function submitInternal(fields, files) {
     const urls = await Promise.all(files.map((file) => uploadPhoto(file, "requests")));
     const { data, error } = await supabase.from("equipment_request").insert({
-      requested_by_name: fields.name, department: fields.department, asset_type: fields.asset_type, urgency: fields.urgency,
+      requested_by_name: fields.name, department: fields.department, asset_type: fields.services[0], urgency: fields.urgency,
+      employee_no: fields.employee_no, hod: fields.hod, services: fields.services.join(", "),
+      requester_email: fields.email.toLowerCase(), hod_email: hods.find((h) => h.name === fields.hod)?.email ?? null,
       justification: fields.justification || null, attachment_path: urls.join("\n") || null,
     }).select("*").single();
     if (error) throw new Error(error.message);
@@ -217,12 +286,17 @@ export default function EntryPage() {
               {pending.length > 0 && <span className="rounded-full bg-warn px-1.5 text-xs text-white">{pending.length}</span>}
             </button>
           )}
+          <button role="tab" aria-selected={view === "loans"} onClick={() => setView("loans")}
+            className={cn("inline-flex items-center gap-1.5 rounded-lg px-4 py-2 text-sm font-medium", view === "loans" ? "bg-brand text-brand-fg" : "text-muted")}>
+            Loan requests
+            {loansWaiting > 0 && <span className="rounded-full bg-warn px-1.5 text-xs text-white">{loansWaiting}</span>}
+          </button>
         </div>
         <div className="relative min-w-[12rem] flex-1">
           <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted" />
           <input className={cn(inputCls, "pl-9")} placeholder="Search #number, name, department, type" value={q} onChange={(e) => setQ(e.target.value)} aria-label="Search requests" />
         </div>
-        {view === "queue" && (
+        {view !== "approvals" && (
           <label className="flex items-center gap-2 text-sm">
             <input type="checkbox" checked={showClosed} onChange={(e) => setShowClosed(e.target.checked)} /> Show delivered and closed
           </label>
@@ -230,12 +304,20 @@ export default function EntryPage() {
       </div>
 
       {!rows && !error && <Card className="p-4"><TableSkeleton rows={4} cols={3} /></Card>}
-      {rows && shown.length === 0 && (
+      {rows && view === "loans" && (shownLoans.length === 0 ? (
+        <Card><EmptyState icon={Timer} title="No open loan requests"
+          message="Requests to borrow an accessory, sent from the public loan form, appear here." /></Card>
+      ) : (
+        <ul className="space-y-3">
+          {shownLoans.map((l) => <LoanCard key={l.loan_id} l={l} canEdit={!isViewer} onChanged={reload} />)}
+        </ul>
+      ))}
+      {rows && view !== "loans" && shown.length === 0 && (
         <Card><EmptyState icon={ClipboardList}
           title={view === "approvals" ? "Nothing waiting for a release decision" : "No open requests"}
           message={view === "approvals" ? "Requests appear here when an officer asks for a release." : "New requests from the public form and from here appear in this queue."} /></Card>
       )}
-      {rows && shown.length > 0 && (
+      {rows && view !== "loans" && shown.length > 0 && (
         <ul className="space-y-3">
           {shown.map((r) => (
             <RequestCard key={r.request_id} r={r} staff={staff} assetTag={tags.get(r.asset_id)} canEdit={!isViewer}
@@ -250,7 +332,7 @@ export default function EntryPage() {
           <button onClick={() => setModal(null)} aria-label="Close" className="rounded-lg border border-border p-2"><X className="h-4 w-4" /></button>
         </div>
         {modal === "form" && (
-          <RequestForm defaultName={fullName || me?.full_name || ""} defaultDepartment={me?.department || ""}
+          <RequestForm defaultName={fullName || me?.full_name || ""} defaultDepartment={me?.department || ""} hods={hods.map((h) => h.name)}
             onSubmit={submitInternal} onDone={(receipt) => setModal(receipt)} />
         )}
         {modal && modal !== "form" && <RequestReceipt receipt={modal} />}

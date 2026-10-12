@@ -141,9 +141,10 @@ function shell(headline: string, sub: string, rows: string, extra = "", accent =
 }
 
 const requestRows = (r: Any) =>
-  row("Request", `#${r.request_id}`) + row("Requested by", r.requested_by_name) + row("Department", r.department) +
-  row("Asset type", r.asset_type) + row("Urgency", r.urgency) + row("Sent", fmtDateTime(r.created_at)) +
-  row("Justification", r.justification);
+  row("Request", `#${r.request_id}`) + row("Requested by", r.requested_by_name) + row("Employee no", r.employee_no) +
+  row("Department", r.department) + row("HOD", r.hod) +
+  row("Request for", r.services ?? r.asset_type) + row("Urgency", r.urgency) + row("Sent", fmtDateTime(r.created_at)) +
+  row("Description", r.justification);
 
 // ---------------------------------------------------------------- kinds ----
 async function newRequest(cfg: Cfg, appUrl: string, id: number) {
@@ -258,8 +259,9 @@ async function receipt(appUrl: string, id: number) {
   const { data: r } = await supabase.from("equipment_request").select("*").eq("request_id", id).maybeSingle();
   if (!r) return json({ ok: false, reason: "request not found" });
   const bytes = buildReceiptPdf({
-    requestId: r.request_id, createdAt: r.created_at, name: r.requested_by_name, department: r.department,
-    assetType: r.asset_type, urgency: r.urgency, justification: r.justification,
+    requestId: r.request_id, createdAt: r.created_at, name: r.requested_by_name, employeeNo: r.employee_no,
+    department: r.department, hod: r.hod,
+    assetType: r.services ?? r.asset_type, urgency: r.urgency, justification: r.justification,
     photoCount: String(r.attachment_path ?? "").split(/[\n,]/).filter((s) => s.trim()).length,
     statusUrl: `${appUrl}/status/?id=${r.request_id}`, company: COMPANY,
   });
