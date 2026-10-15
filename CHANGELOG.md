@@ -5,6 +5,41 @@ the running version is in `app/version.js` and shown in the app's sidebar.
 
 ## Unreleased
 
+- **1.9.3.** Photos (Camera / Gallery) on the IT hardware form (shared
+  `PhotoPicker`, saved via `saveHardware` `photo_path`). Fixed-asset Scan QR
+  reads unkeyed labels as `TAG MAKE MODEL…` (`parseAssetQr`). Every register
+  form's serial field gets its own Scan button (whole QR text = serial; bulk
+  add appends a line). The scanner can import a gallery image.
+- **1.9.2.** IT Inventory: Series numbering tracks current max numbers for
+  fixed names (`TPPC`, `TPLL`, `TPDL`, `TPML`). Registering a new item
+  automatically increments to `max + 1` (e.g. `TPPC247` when current is `246`),
+  provides quick series selection buttons with live current numbers, and enforces
+  that any new item must have a number greater than the current number.
+- **1.9.1.** IT Inventory: Setting status to **Vacant** (via inline table dropdown,
+  bulk action, hardware form, or Excel import) automatically moves the current
+  user into `previous_user`, clears the holder, and checks the device back into
+  custody via `return_asset`.
+- **1.9.0.** Status `Retired` renamed `Damaged`
+  (`20261013030000_damaged_status.sql`: CHECK and rows; no function named it).
+  `LISTING_KPIS` now includes Lost/Stolen, so the IT Accessories cards and the
+  Dashboard's "All items by custody" row show five counts.
+- **1.8.0.** Bulk add on IT Accessories (`app/components/BulkAddForm.js`):
+  category, quantity and the shared details once, optional serial numbers one
+  per line (their count becomes the quantity). Tags continue the `ACC-` series
+  from the next free number. One INSERT, so a tag collision adds nothing. Up to
+  200 items a save. No schema change.
+- **1.7.1.** Two-stage approval (`20261013000000_two_stage_approval.sql`,
+  `20261013010000_simplify_notify_recipients.sql`,
+  `20261013020000_two_stage_fixes.sql`). `equipment_request` gains
+  `hod_approval_status` and its stamp columns; `assign_token` gains the
+  `hod_approve` / `hod_reject` actions. `notify` kinds: `hod_request` (to
+  `hod_email`, two one-use links), `it_review` (to purpose `equipment_request`,
+  after the HOD approves), `hod_rejected` (to `requester_email`); `new_request`
+  and its Allocate / Assign buttons are removed. `/assign` asks a HOD for an ID
+  number, and a reason to reject. The request card loses Assign handler, Set
+  status, Allocate and Ask for release; IT's decision box shows only after the
+  HOD approves. `/status` shows both approvals. The three new triggers ship
+  DISABLED with the rest of the mail.
 - **1.6.0.** Request emails, groundwork (`20261012050000_request_email_and_hods.sql`).
   New `hod` table (name, email; admin-written) seeded with IT's 20 HODs;
   `hod_names()` gives the public form names only. `equipment_request` gains

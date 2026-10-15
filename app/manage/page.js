@@ -14,11 +14,10 @@ import {
   Card, EmptyState, HoldToConfirmButton, KpiCard, ModalPortal, PageHeader, Pagination, SortableTh, TableSkeleton, cn, toast,
 } from "../components/ui";
 
-// Plain-language labels for notify_recipients.purpose (CHECK list in the initial migration).
+// Plain-language labels for notify_recipients.purpose
 const PURPOSE_LABELS = {
-  equipment_request: "New equipment request",
-  release_pending: "Release waiting for decision",
-  release_decided: "Release decided",
+  hod: "HOD (Stage 1)",
+  equipment_request: "IT Department (Stage 2)",
 };
 
 const TABLES = [
@@ -46,9 +45,10 @@ const TABLES = [
     { key: "eligible", label: "Eligible", type: "tristate" },
   ] },
   { id: "notify_recipients", label: "Notify Emails", pk: "id", order: "purpose",
-    note: "Who is emailed, by purpose. One address may appear once per purpose.", columns: [
-    { key: "purpose", label: "Sent for", type: "select", options: PURPOSE_LABELS, required: true },
-    { key: "email", label: "Email", type: "email", required: true }, { key: "name", label: "Name" },
+    note: "Configure who receives emails: HOD (Stage 1) for department bosses, and IT Department (Stage 2) for IT review & stock approval.", columns: [
+    { key: "purpose", label: "Group", type: "select", options: PURPOSE_LABELS, required: true },
+    { key: "name", label: "Name", required: true },
+    { key: "email", label: "Email", type: "email", required: true },
     { key: "active", label: "Active", type: "bool" },
   ] },
 ];

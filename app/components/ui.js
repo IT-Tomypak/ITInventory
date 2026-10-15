@@ -146,7 +146,7 @@ export function KpiCard({ label, value, icon: Icon, tone = "brand", onClick, act
 }
 
 const STATUS_TONE = {
-  "In stock": "ok", "In use": "info", "In repair": "warn", Loaned: "brand", Retired: "muted", "Lost/Stolen": "danger",
+  "In stock": "ok", "In use": "info", "In repair": "warn", Loaned: "brand", Damaged: "muted", "Lost/Stolen": "danger",
   Requested: "info", Approved: "ok", Allocated: "brand", Delivered: "ok", Rejected: "danger", Cancelled: "muted",
   Pending: "warn", Issued: "brand",
   // IT Hardware (assets.hw_status)

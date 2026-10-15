@@ -90,8 +90,8 @@ The home page is a summary of everything in ITrack, live from the database.
   **IT Accessories** and **IT Fixed Assets**. Press one to open that list.
 - **IT Inventory by status** counts devices by hardware status. Press a card to
   open IT Inventory filtered to that status.
-- **All items by custody** counts every item as In stock, In use, In repair or
-  Loaned.
+- **All items by custody** counts every item as In stock, In use, In repair,
+  Loaned or Lost/Stolen.
 - **Needs attention** is the same list as the bell in the header.
 - **Recently added** shows the newest records. Press one to open it.
 
@@ -107,12 +107,16 @@ items, live from the database.
 - **Register asset** adds a new item. **Open / Update** (or a row) shows the full
   record: details, photos, current and past holders, and the history of every
   change.
+- On IT Accessories, **Bulk add** registers several items of one category at
+  once: pick the category, enter the quantity and the details they share. Each
+  item gets the next free tag. Serial numbers are optional; type one per line
+  and the quantity follows the number of lines.
 - Tick rows to **Change status…** or delete several at once. Deleting needs you
   to **press and hold** the button, so it cannot happen by a stray click.
 - **Export CSV** exports the ticked rows, or every row matching the filters if
   none are ticked.
 
-Statuses are **In stock**, **In use**, **Loaned**, **In repair**, **Retired**
+Statuses are **In stock**, **In use**, **Loaned**, **In repair**, **Damaged**
 and **Lost/Stolen**. In use and Loaned need a holder: pick **In use** on the asset form and fill in
 **Handover to** (or use Allocate / Return). An In use asset shows who has it.
 
@@ -146,19 +150,17 @@ The queue of every open request, from the public form and from staff.
 
 - **New equipment request** raises one on someone's behalf, with the same
   fields as the public form.
-- **Set status…** moves a request on: Requested → Approved → Allocated →
-  Delivered. Setting Delivered records the date.
-- **Assign handler…** makes an officer responsible for it.
-- **Allocate** opens Allocate / Return with the request already filled in.
-- **Ask for release** sends the request to the asset custodian for a release
-  decision (see [Release decisions](/help/#release-decisions)).
+- Every request goes through two approvals, shown on its card:
+  1. **HOD.** The requester's HOD is emailed **Approve** and **Reject**
+     buttons. Pressing one opens a page that shows the request and asks for
+     their ID number (and a reason, to reject). Nothing happens until they
+     confirm, and each link works once, for 7 days. A rejection ends the
+     request and the requester is emailed.
+  2. **IT.** Once the HOD approves, IT is emailed and the request appears under
+     **Approvals** (see [IT decisions](/help/#it-decisions)).
+- A request still waiting for its HOD shows **Awaiting HOD approval**; IT
+  cannot act on it until the HOD has.
 - Tick **Show delivered and closed** to see finished requests.
-
-**From your inbox.** IT managers receive an email for each new request. It can
-carry **Allocate** buttons (in-stock items of the right type) and **Assign**
-buttons (officers). Pressing one opens a page that shows exactly what will
-happen and asks you to **Confirm**. Nothing happens until you press it, and
-each email link works once, for 7 days.
 
 **Loan requests.** The **Loan requests** tab lists requests to borrow an
 accessory, sent from the public loan form, with a count of those waiting. They
@@ -214,17 +216,15 @@ every tag starting IT-02; `*` on its own lists everything.
 
 The access level is not the job title. Both are set in User Management.
 
-### Release decisions
+### IT decisions
 
-When an officer presses **Ask for release**, the custodian receives an email,
-and the request appears under **Equipment Request → Approvals** with a count on
-the menu. If something is waiting when an approver signs in, ITrack opens
-that view for them.
+When a HOD approves a request, IT receives an email and the request appears
+under **Equipment Request → Approvals** with a count on the menu. If something
+is waiting when an approver signs in, ITrack opens that view for them.
 
-To decide, add remarks (required to reject), type **your own ID number** as a
-signature, and press **Approve release** or **Reject**. The requester's manager
-and IT are emailed the outcome. The decision is only ever made in ITrack, never
-from an email, so it always carries a signed-in name.
+To decide, check stock, add remarks (required to reject) and press **Approve**
+or **Reject**. The IT decision is only ever made in ITrack, never from an
+email, so it always carries a signed-in name.
 
 ### Asset Value
 

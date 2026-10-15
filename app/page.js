@@ -56,7 +56,7 @@ export default function DashboardPage() {
           </div>
 
           <h2 className={H2}>All items by custody</h2>
-          <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
+          <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-5">
             {LISTING_KPIS.map((k) => (
               <KpiCard key={k.status} label={k.status} icon={k.icon} tone={k.tone} value={count((r) => r.status === k.status)} />
             ))}

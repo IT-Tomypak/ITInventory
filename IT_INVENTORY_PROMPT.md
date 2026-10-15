@@ -6,6 +6,12 @@
 > here has a reason attached — the reasons are part of the brief, not commentary.
 > Do not drop them, and do not "improve" a constraint whose reason you have not
 > read.
+>
+> **This brief describes the system as shipped at v1.6.0 (2026-10-12)**: three
+> record lists (IT Inventory, IT Accessories, IT Fixed Assets) behind a
+> Dashboard, IT's hardware sheet with Excel import/export and QR scan, public
+> hardware and loan request forms, and email built but switched off pending
+> Resend. Building from it reproduces that system, not the pre-1.0 design.
 
 ---
 
@@ -19,8 +25,12 @@
 | `{{SUPABASE_REF}}` | Supabase project ref | `abcdefghijklmnopqrst` |
 | `{{FROM}}` | Sender shown on notification email | `ITrack <itrack@acme.com>` |
 | `{{INTERNAL}}` | Internal login domain — **must not exist, must never receive mail** | `acme.internal` |
+| `{{HODS}}` | The heads of department (name, email) a requester picks from | seeded into `hod` (§4.1) |
+| `{{IT_PHONE}}` | IT helpdesk number shown on refusals; `""` shows none | `lib/site.js` |
 
-§3 explains why `{{INTERNAL}}` has to be a dead domain.
+§3 explains why `{{INTERNAL}}` has to be a dead domain. `{{COMPANY}}` and
+`{{IT_PHONE}}` live in one file, `lib/site.js`, so the footer, the receipt and
+the refusal messages agree.
 
 ---
 
@@ -38,18 +48,24 @@ spreadsheet:
 4. What is out of warranty, nearly out of warranty, or old enough to replace?
 5. A member of staff needs a laptop — where is that request, and who approved it?
 
-**In scope:** the asset register; assignment of an asset to a person, a location or
-a department; check-out and check-in with a condition note at each end; the
-lifecycle status of every item; warranty and refresh dates; a request flow for
-staff who need equipment; an immutable audit trail; an admin-only value report.
+**In scope:** one asset table shown as **three record lists** — **IT Inventory**
+(PCs, laptops, iPads, kept in IT's own 29-column hardware sheet layout), **IT
+Accessories** (individually tagged mice, adapters, bags, monitors…) and **IT
+Fixed Assets** (Finance's fixed-asset register lines: CCTV, network, server
+room, printers) — behind a **Dashboard**; handover and return to a person or a
+location with a condition note at each end; accessory **loans** with a due date;
+the lifecycle status of every item; warranty and refresh dates; a public
+hardware request form and a public loan request form; an immutable audit trail;
+an admin-only value report; IT's procedure flowcharts for reference.
 
 **Explicitly out of scope. Do not build these, do not add tables for them, and do
 not add nav entries for them:**
 
-- **No consumables or stock control.** Toner, cables, RAM sticks and spare
-  keyboards are not modelled. There is no quantity-on-hand, no minimum-quantity
-  reorder, no purchase-order module. An asset is a single serialised item with its
-  own tag, or it does not belong in this system.
+- **No consumables or stock control.** Toner and loose cables are not modelled.
+  There is no quantity-on-hand, no minimum-quantity reorder, no purchase-order
+  module. An accessory is still a single tagged item (`ACC-0042`); the one
+  `quantity` column exists only because one Finance FAR line can cover several
+  units (4 IP cameras), and it is shown on IT Fixed Assets only.
 - **No software licences or subscriptions.** No licence keys, no seats-used
   counting, no renewal tracking.
 - **No helpdesk ticketing.** "My Outlook is broken" is not an equipment request.
@@ -71,13 +87,15 @@ trust and a second spreadsheet.
 | Build | **Static export** — `output: "export"`, `trailingSlash: true`, `images: { unoptimized: true }` |
 | Hosting | Apache / DirectAdmin shared hosting. **No Node process in production.** |
 | Backend | **Supabase** — Postgres + RLS, Auth, Storage, Edge Functions (Deno), Vault, `pg_net` |
-| Email | **Resend** (`POST https://api.resend.com/emails`) |
+| Email | **Resend** (`POST https://api.resend.com/emails`) — built, **switched off** until the domain is verified (§6.0) |
+| QR | `jsqr`, lazy-imported, only where the browser lacks `BarcodeDetector` |
 | Styling | **Tailwind 3.4** over a CSS-variable token layer, `darkMode: "class"` |
 | Charts | `recharts` |
 | CSV | `papaparse` |
 | Icons | `lucide-react` |
 | Misc | `framer-motion`, `clsx`, `tailwind-merge` |
-| Tests | `playwright` as a **devDependency only**, driven by standalone scripts (§10) |
+| Tests | `playwright` and `@electric-sql/pglite` as **devDependencies only**, driven by standalone scripts (§10) |
+| Excel | No library. `lib/xlsx.js` writes, `lib/xlsxRead.js` reads (stored **and** deflated zips, via `DecompressionStream`) |
 
 `package.json` scripts:
 
@@ -191,16 +209,20 @@ the same list:
 
 ```js
 const NAV_ITEMS = [
-  { href: "/",          label: "Asset Register",     icon: Boxes },
-  { href: "/analytics", label: "Analytics",          icon: BarChart3 },
-  { href: "/value",     label: "Asset Value",        icon: Wallet,     adminOnly: true },
-  { href: "/warranty",  label: "Warranty & Refresh", icon: CalendarClock },
-  { href: "/allocate",  label: "Allocate / Return",  icon: ArrowLeftRight },
-  { href: "/entry",     label: "Equipment Request",  icon: ClipboardList },
-  { href: "/manage",    label: "Data Management",    icon: Database,   adminOnly: true },
-  { href: "/staff",     label: "User Management",    icon: UserCog,    adminOnly: true },
+  { href: "/",             label: "Dashboard",          icon: LayoutDashboard },
+  { href: "/inventory",    label: "IT Inventory",       icon: Laptop },
+  { href: "/accessories",  label: "IT Accessories",     icon: Mouse },
+  { href: "/fixed-assets", label: "IT Fixed Assets",    icon: Building2 },
+  { href: "/analytics", label: "Analytics",          icon: BarChart3,      section: "Other modules" },
+  { href: "/value",     label: "Asset Value",        icon: Wallet,         section: "Other modules", adminOnly: true },
+  { href: "/warranty",  label: "Warranty & Refresh", icon: CalendarClock,  section: "Other modules" },
+  { href: "/allocate",  label: "Allocate / Return",  icon: ArrowLeftRight, section: "Other modules" },
+  { href: "/entry",     label: "Equipment Request",  icon: ClipboardList,  section: "Other modules" },
+  { href: "/manage",    label: "Data Management",    icon: Database,       section: "Other modules", adminOnly: true },
+  { href: "/staff",     label: "User Management",    icon: UserCog,        section: "Other modules", adminOnly: true },
   { href: "/audit",     label: "Change Log",         icon: ScrollText, adminOnly: true, section: "Audit Trail" },
   { href: "/assets",    label: "Asset History",      icon: History,    section: "Audit Trail" },
+  { href: "/flow",      label: "Process Flow",       icon: Workflow },
   { href: "/help",      label: "Help & User Guide",  icon: BookOpen },
 ];
 ```
@@ -233,7 +255,10 @@ Shell behaviour:
 ### 3.1 Login is a staff ID number, not an email address
 
 Staff sign in with their **ID number**. Map it internally:
-`12345` → `12345@{{INTERNAL}}`. That domain does not exist and receives no mail.
+`123456` → `123456@{{INTERNAL}}`. That domain does not exist and receives no mail.
+A new login's ID number is **exactly 6 digits** and a password is **at least 6
+characters** — checked in User Management, the set-password screen **and** the
+`manage-users` function, because only the last one is a real check.
 
 Consequences to design for rather than work around:
 
@@ -262,9 +287,11 @@ things; conflating them is how eligibility rules end up wrong.
 
 | Page | officer | approver | viewer | admin | super_admin |
 |---|---|---|---|---|---|
-| `/request`, `/status` (public) | ✔ | ✔ | ✔ | ✔ | ✔ |
-| `/` Asset Register (read) | ✔ | ✔ | ✔ | ✔ | ✔ |
-| `/` edit / bulk / delete | ✔ | ✔ | — | ✔ | ✔ |
+| `/request`, `/loan`, `/status` (public) | ✔ | ✔ | ✔ | ✔ | ✔ |
+| `/` Dashboard, `/flow` | ✔ | ✔ | ✔ | ✔ | ✔ |
+| `/inventory`, `/accessories`, `/fixed-assets` (read) | ✔ | ✔ | ✔ | ✔ | ✔ |
+| Record lists: edit / import / bulk / delete | ✔ | ✔ | — | ✔ | ✔ |
+| Fixed-asset cost column, new staff from an import | — | — | — | ✔ | ✔ |
 | `/allocate` check-out / check-in | ✔ | ✔ | — | ✔ | ✔ |
 | Approve an asset **release** | — | ✔ | — | — | ✔ |
 | `/assets`, `/warranty`, `/analytics` | ✔ | ✔ | ✔ | ✔ | ✔ |
@@ -315,16 +342,21 @@ what.
 
 | Column | Type | Notes |
 |---|---|---|
-| `asset_tag` | text UNIQUE NOT NULL | The sticker on the item. The number people quote. |
-| `asset_type` | text NOT NULL | CHECK: `Laptop`, `Desktop`, `Monitor`, `Printer`, `Network`, `Server`, `Phone`, `Tablet`, `Peripheral`, `Other` |
-| `make` / `model` | text | |
+| `asset_tag` | text UNIQUE NOT NULL | The sticker on the item. `HW-001` (inventory "Device name"), `ACC-0042` (accessory), the F/A Code `CE-00293A01-20` (fixed asset). The form suggests the next free tag in the series. |
+| `asset_type` | text NOT NULL → `categories(name)` ON UPDATE CASCADE | The **category**. Which list an asset is on is its category's `list` — never a column of its own. |
+| `make` / `model` | text | On fixed assets `model` holds the FAR "F/A Description". |
 | `serial_no` | text | Indexed. Not unique — vendors do reuse them, and a wrong unique constraint blocks a legitimate entry at 5pm. |
-| `status` | text NOT NULL DEFAULT `'In stock'` | CHECK: `In stock`, `Assigned`, `In repair`, `Loaned`, `Retired`, `Lost/Stolen` |
-| `location_id` | → `locations` ON DELETE SET NULL | Where it physically is when not with a person |
-| `department` | text | The owning department, which is not the holder |
+| `status` | text NOT NULL DEFAULT `'In stock'` | **Custody** status. CHECK: `In stock`, `In use`, `In repair`, `Loaned`, `Retired`, `Lost/Stolen`. `In use`/`Loaned` are set **only** by custody (§4.5); the UI never offers them. |
+| `hw_status` | text NULL | **IT's own hardware-sheet word**, inventory only. CHECK: `Registered`, `Active`, `Handover`, `Returned`, `Repair`, `Vacant`. Deliberately separate from `status`: the sheet's words are IT's labels and must not fight the custody triggers. |
+| `location_id` | → `locations` ON DELETE SET NULL | Managed pick-list of sites/rooms |
+| `item_location` | text | Free text: "Cabinet 2, shelf 3". Nobody should have to register a shelf as master data first. |
+| `department` | text | The owning department, which is not the holder (FAR "Cost Ctr. 2") |
+| `plant` | text | FAR "Cost Ctr. 1" / sheet "Plant" |
 | `purchase_date` | date | |
-| `purchase_cost_rm` | numeric(12,2) | |
 | `po_no` / `invoice_no` | text | |
+| `fa_code` | text | Finance's FAR number, so the register can be matched to Finance's sheet |
+| `quantity` | int NOT NULL DEFAULT 1 CHECK > 0 | Fixed assets only (one FAR line, several units) |
+| Hardware sheet fields | text | `remark`, `previous_user`, `mac_address`, `os`, `m365_license`, `office_product_key`, `ram`, `storage`, `anydesk_id`, `powerapps_id`, `workgroup`, `special_app`, `app_licenses`, `batch_number`. Columns, **not** JSON: they are filtered, exported and audited one by one. `office_product_key` is readable by every login — mark it `ponytail:` with the upgrade (move to an admin-only table like `asset_value`). |
 | `vendor_id` | → `vendors` ON DELETE SET NULL | |
 | `warranty_end` | date | |
 | `refresh_years` | int DEFAULT 4 | How long this class of item is expected to serve |
@@ -340,6 +372,30 @@ what.
 you can never record the one laptop whose replacement was deferred — and
 "derived" silently changes history every time someone edits `refresh_years`.
 
+**Purchase cost is not on `assets`.** `assets` must be readable by every login;
+money must not. Cost lives in **`asset_value`** (`asset_id` PK → `assets` ON
+DELETE CASCADE, `purchase_cost_rm numeric(12,2) CHECK >= 0`), admin read and
+write, audited by its own trigger. The cost-at-issue snapshot is likewise
+**`assignment_value`** (`assignment_id`, `cost_rm`, `book_value_rm`): admin
+read, **no write policy**, filled only by `allocate_asset()`.
+
+**`categories`** — `name` text PK (non-blank), `list` CHECK `inventory` |
+`accessory` | `fixed`, `active`. A table, not a CHECK, so a new category is a row
+an admin adds on Data Management, not a migration; the FK cascades a rename onto
+every asset. Seed: inventory `iPad`, `Laptop`, `Desktop`; accessory `Adapter`,
+`Cable`, `Charger`, `Headset`, `HP Adapter`, `Keyboard`, `Laptop Bag`,
+`MacBook Adapter`, `Monitor`, `Mouse`, `RAM`, `Screwdriver set`, `SSD`,
+`USB Adapter`, `USB Cable`, `USB Flash Drive`; fixed `Computer`, `Display & AV`,
+`CCTV & Access`, `Network`, `Server Room`, `Storage`, `Camera`, `Printer`,
+`Software`. `equipment_request.asset_type` keeps its own fixed enum
+(`asset_type_t`): a requester asks for a *kind of device*, which is a different
+list from how IT files stock.
+
+**`hod`** — `hod_id`, `name` UNIQUE, `email`, `active`. Seeded with
+`{{HODS}}`. Admin-written; **not readable by `anon`** — the public form gets
+names only through `hod_names()` (§5.5) and the email is paired inside the
+database at submit, so the open internet never sees an HOD's address.
+
 **`locations`** — `location_id`, `name` UNIQUE, `site`, `floor`, `notes`, `active`.
 
 **`vendors`** — `vendor_id`, `name` UNIQUE, `contact_name`, `contact_email`,
@@ -350,7 +406,11 @@ you can never record the one laptop whose replacement was deferred — and
 title), `login_id` (the ID number the person actually signs in with — this is what
 joins a staff record to an auth user), `eligible` boolean **nullable** (NULL means
 "fall back to the department rule"; a three-state flag is deliberate — an explicit
-`false` for one person is different from never having been considered).
+`false` for one person is different from never having been considered),
+`employee_no` (the HR number on IT's sheet — not the login id). Employee ID and
+designation (`role`) are **not** copied onto `assets`: the holder comes from the
+open assignment and their details from this row, so a person is fixed in one
+place.
 
 ### 4.2 The work tables
 
@@ -360,9 +420,13 @@ number the requester quotes, so do not add a separate human reference.
 | Column | Notes |
 |---|---|
 | `requested_by_name` | NOT NULL. Free text — the public form has no session. |
+| `employee_no` | text. Required by the current form. |
+| `requester_email` | text. Their own address, for progress mail. |
 | `department` | NOT NULL |
-| `asset_type` | What they are asking for; same CHECK list as `assets.asset_type` |
-| `justification` | text |
+| `hod` / `hod_email` | The HOD picked from `hod`; the email is paired **by the database**, never sent by the browser |
+| `services` | text — every "Request for Service" ticked, comma-joined, for people to read |
+| `asset_type` | `asset_type_t` enum (`Laptop`, `Desktop`, `Monitor`, `Printer`, `Network`, `Server`, `Phone`, `Tablet`, `Peripheral`, `Other`). **The first service ticked.** Stock suggestions, allocation and email all match on one type; `services` keeps the rest. |
+| `justification` | text — the form's optional "Description", ≤ 2000 chars |
 | `urgency` | CHECK `Normal`, `Urgent` |
 | `status` | NOT NULL DEFAULT `'Requested'`. CHECK `Requested`, `Approved`, `Allocated`, `Delivered`, `Rejected`, `Cancelled` |
 | `release_status` | CHECK `Pending`, `Approved`, `Rejected`. NULL until a release is asked for. |
@@ -375,6 +439,16 @@ number the requester quotes, so do not add a separate human reference.
 
 `status = 'Requested'` is the **magic value**: it is what fires the notification
 email and the receipt archive. Nothing else does.
+
+**`loan_request`** — a public request to **borrow an accessory**. `loan_id`
+bigserial (shown as `L-<id>`), `loaner_name`, `employee_no`, `department`,
+`phone`, `item_type` (an accessory category that had stock when asked),
+`reason`, `start_on`, `end_on` (CHECK `end_on >= start_on`), `status` CHECK
+`Requested`, `Approved`, `Issued`, `Returned`, `Rejected`, `Cancelled`,
+`created_at`. **No INSERT policy** — rows arrive only through
+`submit_loan_request()`. Read for authenticated, update for non-viewers. The
+unit itself is issued as an ordinary handover with a due date (§7.6), so a loan
+gets the same custody history as anything else.
 
 **`asset_assignment`** — the holder history. One row per period of custody, never
 updated in place except to close it.
@@ -390,6 +464,7 @@ updated in place except to close it.
 | `due_back_on` | date — set for a loan, NULL for a permanent issue |
 | `returned_on` | date NULL. **NULL means currently held.** |
 | `condition_out` / `condition_in` | CHECK `New`, `Good`, `Fair`, `Damaged` |
+| `return_status` | The status the asset goes back to on return: `In stock` (default) or `In repair` |
 | `notes_out` / `notes_in` | text |
 | `issued_by` / `received_by` | uuid, trigger-stamped from `auth.uid()` |
 | `created_at` | |
@@ -426,7 +501,10 @@ Three deliberate decisions:
 - The trigger **enumerates the columns it watches**. That means a column added
   later is invisible to the audit until the trigger is re-declared. Write that in a
   comment inside the trigger body, because it will otherwise be discovered a year
-  later by someone wondering why a field has no history.
+  later by someone wondering why a field has no history. **Every migration that
+  adds an `assets` column re-declares `audit_asset_change()`** with the new
+  `(label, old, new)` row in its `VALUES` list — five migrations in this project
+  do exactly that, and it is the price of human-readable history.
 
 **`audit_event`** — account and session events. `event_id`, `event_type`
 (`login` | `logout` | `user_created` | `user_updated` | `user_role_changed` |
@@ -498,9 +576,12 @@ On `assets`:
   can rewrite, is worth nothing in an audit.
 - `trg_default_refresh_due` BEFORE INSERT — `refresh_due :=
   COALESCE(NEW.refresh_due, NEW.purchase_date + (NEW.refresh_years || ' years')::interval)`.
-- `trg_retired_clears_holder` BEFORE UPDATE — a status of `Retired` or
-  `Lost/Stolen` with an open assignment is refused with a clear message. Closing
-  the assignment is a decision, not something a status change should do silently.
+- `trg_retired_clears_holder` BEFORE INSERT/UPDATE OF status — two refusals,
+  both with a plain message: a held asset may only be `In use`/`Loaned`
+  ("Asset X is still held. Return it on Allocate / Return before marking it
+  Retired."), and an unheld asset may **not** be `In use`/`Loaned` ("…is not held
+  by anyone. Fill in the handover to mark it In use."). So nothing is ever In use
+  by nobody, and closing an assignment is a decision, not a status side effect.
 - `trg_audit_asset_change` AFTER INSERT/UPDATE/DELETE — writes `asset_audit`.
   `SECURITY DEFINER`, `SET search_path TO 'public'`.
 
@@ -514,16 +595,22 @@ On `equipment_request`:
   lets any officer update the table; hidden buttons are not access control.
 - `trg_notify_new_request` AFTER INSERT WHEN `NEW.status = 'Requested'` → §6.
 - `trg_archive_request_receipt` AFTER INSERT WHEN `NEW.status = 'Requested'` → the
-  `store-receipt` function (§6.7).
-- `trg_notify_release` AFTER UPDATE OF `release_status`, plus AFTER INSERT WHEN
-  `release_status = 'Approved'` → §6.5.
+  `notify` function, kind `receipt` (§6.7).
+- `trg_notify_release` AFTER UPDATE OF `release_status`, plus
+  `trg_notify_release_on_insert` AFTER INSERT WHEN `release_status = 'Approved'`
+  (a request keyed in already approved never passes through an UPDATE) → §6.5.
+
+All notify triggers share **one** body, `notify_trigger()`, with the kind in
+`TG_ARGV[0]` (`new_request` | `release` | `receipt` | `handover`), calling one
+`notify_post(jsonb)`.
 
 On `asset_assignment`:
 
 - `trg_stamp_assignment_author` BEFORE INSERT.
-- `trg_sync_asset_status` AFTER INSERT/UPDATE — an open row sets the asset to
-  `Assigned` (or `Loaned` when `due_back_on` is set); closing the row (`returned_on`
-  set) puts the asset back to `In stock` unless the officer chose `In repair`.
+- `trg_sync_asset_status` AFTER INSERT/UPDATE OF `returned_on`, `due_back_on`,
+  `return_status` — an open row sets the asset to `In use` (or `Loaned` when
+  `due_back_on` is set); closing the row puts it to `COALESCE(return_status,
+  'In stock')`. `SECURITY DEFINER`.
   One place decides asset status, so the register and the history cannot disagree.
 - `trg_audit_assignment` AFTER INSERT/UPDATE — writes `assigned` / `returned` rows
   into `asset_audit` with the holder's name as the value.
@@ -548,7 +635,7 @@ every list.
 **`receipts`** — **private**. The archived request receipt PDF, named
 `ITrack-Request-<request_id>.pdf`. `SELECT` for `authenticated`, read through
 `createSignedUrl(path, 300)`. **No INSERT policy at all** — only the
-`store-receipt` Edge Function writes, under the service role. An archived receipt
+`notify` Edge Function (kind `receipt`) writes, under the service role. An archived receipt
 that a client could upload would be worthless as evidence, which is the entire
 reason the archive exists.
 
@@ -593,7 +680,8 @@ A `FOR ALL` policy also governs `SELECT`, so the read policy must exist
 separately or viewers lose read access too. Policies are permissive and OR
 together.
 
-**Master data** (`locations`, `vendors`, `staff`, `notify_recipients`):
+**Master data** (`locations`, `vendors`, `staff`, `categories`, `hod`,
+`notify_recipients`):
 
 ```sql
 CREATE POLICY "read for authenticated" ON t FOR SELECT TO authenticated USING (true);
@@ -643,34 +731,62 @@ technique anywhere else that distinction appears.
   repair stays auditable — but a table sitting in `public` with RLS off is exposed
   through PostgREST to anyone holding the anon key, which is everyone.
 
-### 5.5 What anonymous users may do — exactly two things
+### 5.5 What anonymous users may do — two writes, three reads, all RPCs
 
-**One write**, through a `SECURITY DEFINER` function and nothing else:
+No table is granted to `anon`. Every anonymous call is a `SECURITY DEFINER`
+function with `REVOKE EXECUTE … FROM public` then `GRANT EXECUTE … TO anon,
+authenticated, service_role`.
+
+**Writes:**
 
 ```sql
 CREATE FUNCTION public.submit_equipment_request(
   p_name text, p_department text, p_asset_type text,
-  p_justification text, p_urgency text, p_attachment text
-) RETURNS bigint
+  p_justification text, p_urgency text, p_attachment text,
+  p_employee_no text DEFAULT NULL, p_hod text DEFAULT NULL,
+  p_services text[] DEFAULT NULL, p_email text DEFAULT NULL
+) RETURNS jsonb   -- {ok, request_id, created_at} | {ok:false, reason}
 LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public' AS $$ ... $$;
-GRANT EXECUTE ON FUNCTION public.submit_equipment_request(...) TO anon;
+
+CREATE FUNCTION public.submit_loan_request(
+  p_name text, p_employee_no text, p_department text, p_phone text,
+  p_item_type text, p_reason text, p_start_on date, p_end_on date
+) RETURNS jsonb;
 ```
 
-Inside it, **before** the insert, enforce a sliding-window rate limit against
-`request_submission_log`: **5 per requester name per hour** and **40 per hour
-overall**. Log the attempt either way — accepted or refused — with the reason.
-The form is open by design; rate limiting rather than authentication is what
-protects it.
+Both:
 
-**One read**: `check_request_status(p_request_id bigint)`, granted to `anon`,
-returning only status, dates and the asset type — never the holder, never a cost,
-never a note. Take the request number **only**. A name-plus-number version was
-tried and removed: requesters mistype their own name, the lookup failed, and they
-re-submitted the request instead — which is worse than a guessable id for data
-this bland.
+- take `pg_advisory_xact_lock(hashtext('submit_equipment_request'))` first, so
+  two submissions at once cannot both slip under a limit — the **same** lock and
+  the **same** `request_submission_log`, so the limits are shared;
+- validate, then enforce **5 accepted per requester name per hour** and **40
+  per hour overall**, and **log every attempt** with `x-forwarded-for` and a
+  reason code (`missing_fields`, `invalid_asset_type`, `invalid_dates`,
+  `item_unavailable`, `rate_limited_name`, `rate_limited_overall`, …) — the
+  refusals are the valuable rows;
+- return `{ok:false, reason}` rather than raising, so the page can map each code
+  to a human sentence.
 
-Everything else anonymous is `REVOKE`d. Also provide `public_asset_type_list()` if
-the form needs a dropdown; never expose the asset table to `anon`.
+The hardware one pairs `hod_email` from `hod` by name, sets `asset_type` to the
+first service, caps photos at 4 and `justification` at 2000 chars. When a new
+parameter is added, **drop the old signature in the same migration**: a
+defaulted overload beside it is ambiguous to PostgREST. Defaulted new
+parameters keep an already-open old page working; mark the
+"`p_services IS NULL` = old page, old rules" branch `ponytail:` with when to make
+them required.
+
+**Reads:**
+
+- `check_request_status(p_request_id bigint)` — status, dates, asset type,
+  delivered/acknowledged. Never the holder, a cost or a note. Request number
+  **only**: a name-plus-number version was tried and removed — requesters
+  mistyped their own name, the lookup failed, and they re-submitted instead.
+- `loanable_accessories()` → `(item_type, available)`: accessory categories with
+  `In stock` units, **counts only** — no tag, serial or holder leaves the database.
+- `hod_names()` → the active HOD names for the form's combo box. Never the emails.
+
+Everything else anonymous is `REVOKE`d, and `tools/check-anon.mjs` proves it
+against the live project.
 
 ---
 
@@ -678,42 +794,68 @@ the form needs a dropdown; never expose the asset table to `anon`.
 
 This is the part most likely to be built wrong, so it is specified in full.
 
+### 6.0 Current state: built, switched off
+
+Email is **built but OFF**. A Microsoft Graph route was built first and dropped
+(2026-10-07); the `notify` function now sends through **Resend** but the domain
+is not yet verified. A migration (`…_email_paused.sql`) runs
+`ALTER TABLE … DISABLE TRIGGER` on the four mail triggers — **disabled, not
+dropped**, so going live is: verify the domain in Resend, put
+`notify_resend_api_key` in Vault, set `notify_from` / `notify_app_url`, then
+`ENABLE TRIGGER` the same four. `trg_archive_request_receipt` stays **on**: it
+files the PDF and sends no mail. Say all this at the top of `EMAIL_PIPELINE.md`
+and in the user guide, so nobody waits for a mail that cannot come.
+
 ### 6.1 The chain
 
 ```
-INSERT INTO equipment_request (status = 'Requested')
-        │
-        ▼  AFTER INSERT trigger: trg_notify_new_request
-public.notify_new_request()          ← plpgsql, SECURITY DEFINER, search_path = public
+INSERT/UPDATE on equipment_request or asset_assignment
+        │  trg_notify_* / trg_archive_request_receipt
+        ▼
+public.notify_trigger()  → public.notify_post(jsonb {kind, ...})
+        │   plpgsql, SECURITY DEFINER, search_path = public
         │   BEGIN … EXCEPTION WHEN OTHERS THEN NULL; END
-        │   ← a notification failure can NEVER fail or block the insert
-        ▼  net.http_post(...)  — pg_net, ASYNC, fire-and-forget
-Edge Function: notify-new-request    ← Deno, verify_jwt = false
-        │  ├─ get_notify_config()  → reads Vault
-        │  ├─ reject 401 unless header x-webhook-secret matches
-        │  ├─ notify_recipients WHERE active AND purpose = 'equipment_request'
-        │  ├─ build table-based HTML
+        │   ← a notification failure can NEVER fail or block the write
+        ▼  net.http_post(...)  — pg_net, ASYNC, sends only after COMMIT
+Edge Function: notify                ← ONE function, Deno, verify_jwt = false
+        │  ├─ reject 405 unless POST, 401 unless x-webhook-secret matches
+        │  ├─ get_notify_config()  → every Vault secret named notify_*
+        │  ├─ switch (kind):
+        │  │    new_request → purpose equipment_request (+ Allocate / Assign buttons)
+        │  │    release     → release_pending | release_decided
+        │  │    handover    → the holder's own staff email (+ Confirm receipt)
+        │  │    receipt     → PDF into the private receipts bucket, no email
         │  └─ logSend() → notify_log  (best effort, wrapped in try/catch)
         ▼  HTTPS POST https://api.resend.com/emails
 Resend  →  recipient mail servers
 ```
 
+One function, not four: they share the template, the config read and
+`logSend`, and a rolled-back insert mails nobody because `pg_net` only sends
+after commit. The email buttons are served by a **second** function,
+`assign-action` (§7.8), and accounts by a third, `manage-users` (§7.13). That is
+the whole set.
+
 Three invariants in **every** trigger function that posts:
 
 ```sql
+CREATE OR REPLACE FUNCTION public.notify_post(p_body jsonb) RETURNS void
+LANGUAGE plpgsql SECURITY DEFINER SET search_path TO 'public' AS $$
 BEGIN
   PERFORM net.http_post(
-    url     := 'https://{{SUPABASE_REF}}.supabase.co/functions/v1/notify-new-request',
+    url     := 'https://{{SUPABASE_REF}}.supabase.co/functions/v1/notify',
     headers := jsonb_build_object(
                  'Content-Type', 'application/json',
                  'x-webhook-secret', public.notify_secret()),
-    body    := jsonb_build_object('request_id', NEW.request_id, ...),
-    timeout_milliseconds := 20000
-  );
+    body    := p_body,
+    timeout_milliseconds := 20000);
 EXCEPTION WHEN OTHERS THEN
-  NULL;   -- the request is always saved; the email is best effort
-END;
+  NULL;   -- the row is always saved; the email is best effort
+END $$;
 ```
+
+Install `pg_net` `WITH SCHEMA extensions`, not `public` — the linter flags it,
+and its functions live in schema `net` either way.
 
 - **`timeout_milliseconds := 20000`.** The default 5 s is not enough for an Edge
   Function cold start, and a timeout throws the response away — the mail still
@@ -736,9 +878,13 @@ RPC granted to `service_role` only:
 | Vault secret | Purpose |
 |---|---|
 | `notify_webhook_secret` | The shared secret between the database and its own functions |
-| `notify_resend_key` | Resend API key |
+| `notify_resend_api_key` | Resend API key. Missing → the send is logged as failed with that reason, nothing throws. |
 | `notify_from` | Sender, e.g. `{{FROM}}` |
 | `notify_app_url` | `https://{{DOMAIN}}` — where the action links point |
+
+`get_notify_config()` returns `jsonb_object_agg(name, decrypted_secret)` over
+`vault.decrypted_secrets WHERE name LIKE 'notify\_%'`, granted to `service_role`
+only — a new secret is a Vault row, not a code change.
 
 ```sql
 CREATE OR REPLACE FUNCTION public.notify_secret() RETURNS text
@@ -792,10 +938,11 @@ Zero matching recipients is **not an error** — return
 `200 {ok: false, reason: "no active recipients"}`. Raising here would mean a
 misconfigured list breaks nothing visible but logs a scary failure.
 
-### 6.4 `notify-new-request` — and the buttons that act from the inbox
+### 6.4 kind `new_request` — and the buttons that act from the inbox
 
-**Content:** request number, requested-by, department, asset type, urgency,
-justification, and **the photos the requester attached** — up to 4, as linked
+**Content:** request number, requested-by, employee no, email, department, HOD,
+services, asset type, urgency, description, and **the photos the requester
+attached** — up to 4, as linked
 150px thumbnails. Photos are referenced **by URL**, not attached, because the
 bucket is public-read: the images load without a login and the message stays
 small. (Outlook desktop blocks remote images until the reader clicks "Download
@@ -833,13 +980,14 @@ is a bearer credential — anyone holding the email can use it. It is scoped to 
 request and one action, it expires, and it is reversible in the app, which is why
 this is acceptable for allocation and would not be for anything destructive.*
 
-### 6.5 `notify-release` — the decision is made in the app, not in the mail
+### 6.5 kind `release` — the decision is made in the app, not in the mail
 
 Fired by `trg_notify_release`. `mode` is `lower(NEW.release_status)` →
 `pending` | `approved` | `rejected`. Recipients by purpose:
 `pending` → `release_pending`, everything else → `release_decided`.
 
-The email's **only** button opens `${appUrl}/entry/`. The decision deliberately
+The email's **only** button opens `${appUrl}/entry/` (`?view=approvals` for
+pending). The decision deliberately
 does *not* happen in the mail, so that:
 
 - there is **one** place an approval can happen and one place that records it;
@@ -854,7 +1002,7 @@ Give each mode an accent colour in the template (`#1d1d1f` pending, `#0f7a3d`
 approved, `#a3341f` rejected) and nothing else different, so the three cannot
 drift apart.
 
-### 6.6 `notify-handover` — the receipt acknowledgement
+### 6.6 kind `handover` — the receipt acknowledgement
 
 Fired by `trg_notify_handover` AFTER INSERT on `asset_assignment`, when the row
 has a `staff_id` and that staff member has a real `email` (not the
@@ -869,9 +1017,12 @@ Deliberately silent when the officer assigns an asset **to themselves**, and whe
 any other field on the assignment is edited. A notification that fires on
 everything gets muted, and then the ones that matter are lost too.
 
-### 6.7 `store-receipt` — the one idempotent function
+### 6.7 kind `receipt` — the one idempotent path
 
-Fired by `trg_archive_request_receipt`. It builds the **same** A5 PDF the
+Fired by `trg_archive_request_receipt`, and the only kind still running while
+email is off (§6.0). The PDF writer is a copy of `lib/receipt-pdf.js` at
+`supabase/functions/notify/receipt-pdf.js` — keep them identical; a change to
+one is a change to both. It builds the **same** A5 PDF the
 requester downloaded, server-side, and files it in the private `receipts` bucket
 as `ITrack-Request-<request_id>.pdf` with `upload(..., { upsert: true })`. Upsert
 on a name derived from the id makes a retry replace rather than accumulate — the
@@ -882,7 +1033,7 @@ bucket at all (§4.6).
 
 ### 6.8 `notify_log` — observability, not idempotency
 
-Both notify functions call a local helper:
+Every send in `notify` goes through one `send()` → `resendSend()` + `logSend()`:
 
 ```ts
 async function logSend(purpose, recipients, subject, res, body) {
@@ -902,12 +1053,12 @@ async function logSend(purpose, recipients, subject, res, body) {
 
 Four things to get right, each with a reason:
 
-- **Duplicate this helper in each function rather than sharing a module.** Edge
-  functions deploy independently; a shared module means neither can be redeployed
-  alone.
+- **No shared module between Edge Functions.** They deploy independently; a
+  shared module means none can be redeployed alone. (This is why `notify` is one
+  function with a `kind` switch rather than four sharing an import.)
 - **Hold the subject in a variable** and pass it to both the send and the log. A
   second copy of the expression is free to drift from what was actually sent.
-- **Both functions always return HTTP 200**, including when Resend fails
+- **`notify` always returns HTTP 200**, including when Resend fails
   (`{ok: res.ok, status, result}`). The only non-200s are `405` and `401`. The
   caller is a trigger that swallows errors anyway; a notification that half-works
   is worse than one that works and goes unrecorded.
@@ -922,7 +1073,7 @@ when the log is unreadable.
 
 **There is no dedupe and there are no retries.** Each trigger fire is one provider
 call. Idempotency is handled upstream where it belongs: the unique index on open
-assignments (§4.2), and `store-receipt`'s upsert.
+assignments (§4.2), and the receipt kind's upsert.
 
 ### 6.9 Deliverability — do this on day one, not after the first complaint
 
@@ -933,9 +1084,18 @@ assignments (§4.2), and `store-receipt`'s upsert.
 ```ts
 headers: {
   "X-ITrack-Notify": "<a fixed random value chosen once>",
+  "X-Mtrack-Notify": "<the sibling app's header value>",  // see below
   "X-Entity-Ref-ID": String(requestId),   // thread-collapse hint for Gmail/Resend
 }
 ```
+
+  At {{COMPANY}} the Exchange tenant has a **"Phishing domain" transport rule**
+  that quarantines mail claiming to be from `{{MAIL_DOMAIN}}`. Its one existing
+  exception is the header of a sibling app (MTrack) that already sends through
+  Resend on the same domain — so ITrack carries that header too, and **reuses
+  MTrack's Resend account and verified domain** rather than verifying a second
+  one. Comment that the MTrack header can go only once the rule also excepts
+  `X-ITrack-Notify`.
 
   If the recipient is on Microsoft 365, a **custom Exchange transport rule** is
   the likely cause of mail vanishing into quarantine — not spam scoring, not spoof
@@ -946,8 +1106,9 @@ headers: {
   saying it must not be changed without updating the mail rule in the same breath.
 - **SMTP is not an option** and you should not spend time on it: Deno Deploy blocks
   ports 25/465/587, and the app is a static export with no server route to send
-  from. The only alternative to an HTTP mail API would be Microsoft Graph
-  `POST /v1.0/users/{id}/sendMail`.
+  from. Microsoft Graph `POST /v1.0/users/{id}/sendMail` (client credentials, an
+  Exchange `ApplicationAccessPolicy`/management scope limiting the app to the
+  helpdesk mailbox) was built and **dropped** by IT; do not rebuild it.
 
 ### 6.10 The HTML template
 
@@ -980,7 +1141,8 @@ sitting unhandled — surfaces **in the app** instead:
 - One shared query in **`lib/alerts.js`** exporting `loadAlerts()` and
   `ALERT_TONES`. It returns plain data with no React import; the consumer picks
   the icon.
-- A **notification bell** in the header lists everything it returns, live.
+- A **notification bell** in the header lists everything it returns, live —
+  including releases waiting (approvers) and **loan requests waiting**.
 - The **same list** is shown once per sign-in as a briefing panel for admins, so a
   manager who opened ITrack for one specific thing still learns that four
   warranties expire this month. It never appears when there is nothing to report,
@@ -1035,18 +1197,23 @@ a server room.
 
 ### 7.1 Landing (before login)
 
-Two choices, nothing else: **IT Department** (sign in) and **I Need Equipment**
-(the public request form, no login). The pre-login screens live outside
+Three choices, nothing else: **IT Department** (sign in), **I Need Equipment**
+(`/request`) and **Borrow an Accessory** (`/loan`), plus a small "Track a
+request" link to `/status`. All public pages share one `PublicPage` wrapper. The pre-login screens live outside
 `AppShell`, so they carry their own theme toggle — a user who prefers dark must not
 be forced through a white login screen to get to it.
 
 ### 7.2 `/request` — public equipment request, no login
 
-Fields: name, department, asset type, urgency, justification, and **photo attach /
-camera capture** (up to 4; on a phone a Camera button opens the camera directly).
+Fields, in IT's own form's words: **Requester name**, **Employee no**, **Email**
+(their own), **Department**, **HOD Department** (an `<input list>` type-to-search
+combo fed by `hod_names()`), **Request for Service(s)** (checkboxes, tick
+several), urgency, an optional **Description**, and **photo attach / camera
+capture** (up to 4; separate **Camera** and **Gallery** buttons — Android's
+photo picker otherwise hides the camera).
 
-Submits through `submit_equipment_request(...)` — the only write anonymous users
-have — and returns the request number.
+Submits through `submit_equipment_request(...)` (§5.5) and returns the request
+number.
 
 **Receipt on submission.** The confirmation screen is a printed-docket-style
 receipt showing the request number, timestamp, requester, department, asset type,
@@ -1057,6 +1224,15 @@ request leaves the site to produce it. The same PDF is archived server-side by
 
 Show the rate-limit refusal as a plain, human message with the number to call —
 not a generic error. A person who has been refused needs to know what to do next.
+One `REFUSALS` map, reason code → sentence, using `itContact()` from `lib/site.js`.
+
+### 7.2a `/loan` — borrow an accessory, no login
+
+Loaner name, employee no, department, phone, **Loaned item** (a `<select>` of
+`loanable_accessories()`, showing how many are available), reason, start and end
+date. Submits through `submit_loan_request(...)`; confirmation shows `L-<id>`.
+Refusals through the same kind of `REFUSALS` map (`item_unavailable`: "That item
+has just run out…"). IT works these on `/entry` → Loan requests (§7.7).
 
 ### 7.3 `/status` — public tracking, no login
 
@@ -1065,14 +1241,75 @@ whether it has been delivered and acknowledged. Reads
 `check_request_status(p_request_id)` and nothing else. No holder name, no cost, no
 internal note.
 
-### 7.4 `/` — the asset register (all roles read)
+### 7.4a `/` — Dashboard (all roles)
 
-The main screen. Live from the database, no cached copy.
+A summary only; every figure links to the page that owns it. Record counts for
+the three lists, **IT Inventory by hardware status** (Registered, Active,
+Handover, Returned, Repair, Vacant), custody counts, what needs attention (the
+same `loadAlerts()` as the bell) and the six newest records. Cards link to a
+list with `?status=` pre-filtered. No money on this page.
 
-- **KPI cards** per status (`In stock`, `Assigned`, `In repair`, `Loaned`,
-  `Retired`, `Lost/Stolen`), plus total book value for admins only.
-- **Filters**: free-text search (tag, serial, make, model, holder), asset type,
-  status, department, location, warranty state, date range.
+### 7.4 `/inventory`, `/accessories`, `/fixed-assets` — the record lists (all roles read)
+
+**One component, `app/components/RegisterPage.js`, taking `list`**
+(`inventory` | `accessory` | `fixed`); each route is a three-line page. Rows are
+`assets` whose category's `list` matches. Live from the database, no cached copy.
+`loadRegister()` **pages through PostgREST's 1000-row cap** with a fresh,
+ordered query per page, so nothing silently stops at row 1000.
+
+- **KPI cards** per custody status (`In stock`, `In use`, `Loaned`, `In repair`,
+  `Retired`, `Lost/Stolen`); IT Inventory shows the hardware statuses instead.
+  No book value on the lists — money is on `/value`.
+- **Filters**: free-text search (tag, serial, make, model, holder), category,
+  status, department, location, warranty state, date range. A **Sort** box beside
+  Filters: A–Z by tag, or Recently added (newest `asset_id`). URL params `?q=`,
+  `?status=`, `?open=1`.
+- **Columns per list.**
+  - *IT Inventory* — the table shows five: **Device Name, Status, Employee Name,
+    Model, Serial number**. Status is a **dropdown** (non-viewers) that saves at
+    once; choosing **Active** for a device nobody holds opens the form with the
+    employee required, because Active means someone has it. The detail pop-up
+    and the **Excel export** carry all 30 sheet columns **verbatim and in
+    order** (`Names, Device_name, Status, Workgroup, Remarks, Device_type,
+    Employee_name, Employee_id, Previous_users, Plant, Location, Department,
+    Designation, Purchased_year, Handover_date, Mac_address, Brand, Model,
+    Serial_number, OS, M365_license, Office_productkey, RAM, HDD_capacity,
+    Anydesk_id, Special_app, App_licenses, Batch_number, Vendor_name,
+    __PowerAppsId__`), so an export can be edited and imported back.
+  - *IT Fixed Assets* — Finance's FAR headers: F/A Code, Category, F/A
+    Description, Suppliers, Cost Ctr. 1, Cost Ctr. 2, Location, Acquisition
+    Date, Quantity, Purchase Order, Invoice No., Remarks, plus **Cost c/f for
+    admins only** (RLS on `asset_value` decides; the column is just hidden for
+    others).
+  - *IT Accessories* — tag, category, make/model, serial, holder, status,
+    item location.
+- **Forms.** Inventory uses `HardwareForm` (the sheet's fields, grouped);
+  the others use `AssetForm`. Both save through one routine, `lib/hardware.js`
+  `saveHardware()` for hardware, so a row saved by hand and a row imported
+  follow the same rules: **Employee name is the holder** — a different person is
+  returned from the old holder and handed over to the new one through the
+  `return_asset` / `allocate_asset` RPCs, so custody history stays complete, and
+  the old name becomes `previous_user`; a change of holder moves
+  Registered/Vacant → Active, and Active → Vacant when emptied. A name not in
+  `staff` is created only for an admin; an officer is told to ask one.
+- **Excel import (IT Inventory).** `HardwareImport` reads an `.xlsx` with
+  `lib/xlsxRead.js`, maps headers by letters-and-digits only (so
+  `Device_name` and `Device name` both match), and `lib/hardwareImport.js`
+  **plans** every row against what is stored before anything is written — a
+  pure function, so a script can test it. Rules agreed with IT: match by Device
+  name, a new name is a new device; **a blank cell keeps what is stored**, so a
+  partial sheet never wipes data (except Vacant/Registered with no employee,
+  which frees the device); a person is found by Employee ID first, then name;
+  a duplicate or malformed key, serial, AnyDesk ID or MAC is an error and that row
+  is not applied. Show the plan as a preview (new / changed / unchanged /
+  error), apply on confirm.
+- **Scan QR** on all three forms: a live camera view decodes the first QR it
+  sees with `BarcodeDetector`, else lazy-loaded `jsqr`, with "Take photo instead"
+  for no live camera (plain http, permission refused). `parseQr()` fills only the
+  fields this form has. **A serial already registered opens that record
+  instead**, switching list if needed (`/<list>/?q=TAG&open=1`), so a scan cannot
+  create a duplicate.
+- Each row has a **Handover** / **Return** shortcut to `/allocate/?asset=<id>`.
 - **Phone**: each asset is a large readable **card** with an "Open / Update"
   button. **Tablet and desktop**: a full sortable table with a sticky action
   column, row selection, and bulk status change / delete.
@@ -1094,34 +1331,43 @@ change, every request it was allocated against. Open to **all** roles including
 viewer — an officer looking up what happened to a laptop is operational work, not
 an administrative privilege. (Contrast `/audit`, which is admin-only.)
 
-### 7.6 `/allocate` — check-out and check-in
+### 7.6 `/allocate` — Handover and Return
 
-The operational heart. Two modes on one screen:
+The operational heart. Two modes on one screen, labelled **Handover** and
+**Return** (IT's words — not "check out / check in"; the database messages use
+the same words). URL params `?asset=<id>` pre-picks an asset; `?due=<date>`
+pre-fills a loan's due date (from a loan request).
 
-**Check out.** Pick an asset (`In stock` only, searchable by tag or serial), pick a
+**Handover.** Pick an asset (`In stock` only, searchable by tag or serial), pick a
 holder — a staff member **or** a location — set `issued_on`, optional
-`due_back_on` (setting it makes the asset `Loaned`, not `Assigned`),
+`due_back_on` (setting it makes the asset `Loaned`, not `In use`),
 `condition_out` and notes. Optionally link an open `equipment_request`.
 
-**Check in.** Pick a currently-held asset, set `returned_on`, `condition_in`,
-notes, and the resulting status (`In stock` by default, or `In repair`).
+**Return.** Pick a currently-held asset, set `returned_on`, `condition_in`,
+notes, and the resulting status (`In stock` by default, or `In repair`), through
+`return_asset(...)`.
 
 Both go through **one atomic RPC**, not a sequence of client writes. Build
 `allocate_asset(p_request_id, p_asset_id, ...)` on this shape, which is the
 pattern worth copying exactly:
 
 ```
-1. Refuse viewers FIRST, before reading anything — so the error cannot be used
-   to probe which asset ids exist.
+1. assert_can_move_custody(): refuse viewers (and anon) FIRST, before reading
+   anything — so the error cannot be used to probe which asset ids exist.
+   The service role is allowed: the email /assign flow calls it.
 2. SELECT ... FOR UPDATE on the asset row.
 3. Reject a status that is not 'In stock' with a specific message.
 4. Insert the asset_assignment row (the partial unique index is the real
    double-issue guard).
 5. Update the request row to 'Allocated' and stamp asset_id.
-6. Snapshot any value you will report on later into the assignment row — never
-   re-join the asset table for historical figures, because the asset's cost
-   can be corrected tomorrow and your history must not change with it.
+6. Snapshot cost and book value into assignment_value — never re-join the
+   asset table for historical figures, because the asset's cost can be
+   corrected tomorrow and your history must not change with it.
 ```
+
+Both RPCs are `SECURITY DEFINER` (they write `assignment_value`, which has no
+write policy), so the role check in step 1 is the access control — it is not
+optional.
 
 Keep it a **function, not a trigger**: an administrator fixing a status typo on an
 assignment must not mint a second allocation as a side effect.
@@ -1140,6 +1386,16 @@ for `isApprover`, and the write is refused by `trg_guard_asset_release` for anyo
 else. If something is waiting, land the approver on this view automatically and put
 a count badge on the nav entry.
 
+**Each request card** shows the request number, requester, employee no, email,
+department, HOD, services, description, photos and the archived receipt (signed
+URL).
+
+**Loan requests tab.** The `loan_request` queue, `L-<id>`, newest first: loaner,
+employee no, department, phone, item, reason, dates. A status dropdown
+(`Approved`, `Issued`, `Returned`, `Rejected`, `Cancelled`) for non-viewers and
+an **Issue the loan** link to `/allocate/?due=<end_on>`. Waiting loans count on
+the bell and the nav badge.
+
 ### 7.8 `/assign` — the email confirmation page (public route, token-authorised)
 
 Reached from an action button in a notification email. **The token in the URL is
@@ -1150,9 +1406,15 @@ Rules, all of them non-negotiable:
 - **Opening the page performs no write.** It reads the token, shows what will
   happen ("Allocate asset `IT-0241` (Dell Latitude 5420) to request #118?"), and
   waits. Safe Links will open this URL by itself; it must be harmless.
-- The write happens on the confirmation press, through an Edge Function that
-  re-validates the token (exists, unused, unexpired) and **re-checks eligibility
-  server-side**.
+- The write happens on the confirmation press, through the `assign-action` Edge
+  Function, which calls **one** SQL function, `assignment_link(p_token, p_choice,
+  p_signature, p_ip, p_commit)`, for both the preview (`p_commit = false`) and
+  the press — so the preview and the press cannot disagree. It re-validates the
+  token (exists, unused, unexpired) and **re-checks eligibility server-side**
+  against `eligible_handlers()`: a person with a login, and either
+  `eligible = true` or (`eligible IS NULL` and in the IT department); an explicit
+  `false` always wins. The function exists only because the write needs the
+  service role and to record the caller's IP.
 - After success, show what happened and who was notified. After failure — expired,
   already used, no longer eligible — say which, in plain words.
 - Record `used_at`, `used_for`, `chosen_id` and `used_ip`.
@@ -1183,8 +1445,10 @@ this is the one page whose data is admin-read (§5.4).
 
 ### 7.12 `/manage` — data management (admin only)
 
-CRUD for `assets`, `locations`, `vendors`, `staff`, `notify_recipients`, with
-sorting, pagination, search and CSV export per table. Plus:
+CRUD for `locations`, `vendors`, `staff`, **`categories`** (per list — adding a
+category is how IT grows a list), **`hod`** (the public form's HOD list) and
+`notify_recipients`, with sorting, pagination, search and CSV export per table.
+Assets are edited on their record lists, not here. Plus:
 
 - **Notify Emails** — the recipient list from §6.3, with the `purpose` shown as a
   plain-language label ("New equipment request", "Release waiting for decision").
@@ -1228,6 +1492,18 @@ gate is for the interface only.
 One feed from the `audit_feed` view: sign-ins, account changes, and every audited
 asset change, newest first, filterable by category, actor and date. Read-only by
 construction (§4.3) — there is no edit affordance to build, and that is the point.
+
+### 7.14a `/flow` — Process Flow (all roles, reference only)
+
+IT's procedure-document flowcharts — *Flowchart 8: IT Hardware Request System*,
+the handover and return flowcharts, and accessory loans — each with links to the
+module that does that step. **Drawn as inline SVG** by
+`app/components/Flowchart.js` from data in `lib/flowcharts.js`: nodes
+(`start` / `step` / `decision`, box centre + size + text lines) and edges
+(points, label). **The wording in every box is the document's own, spelling
+included** — the page mirrors the procedure, it does not rewrite it. Not images:
+the host blocks `.png` (§9), and SVG follows the theme. No workflow is driven by
+this page.
 
 ### 7.15 `/help` — the user guide, in the app
 
@@ -1377,9 +1653,13 @@ The minimum set, with what each must assert:
 | `check-audit.mjs` | An edit writes one `asset_audit` row **per changed field**, and no API call can delete one. |
 | `check-mobile.mjs` / `check-desktop.mjs` | The register renders as cards on a phone viewport with **no horizontal page scroll**, and as a table on desktop. |
 | `check-help.mjs` | Every `HelpLink` slug resolves to a heading in the generated guide. |
-| `check-exports.mjs` | CSV and XLSX exports respect the current row selection. |
+| `check-schema.mjs` | Runs **every migration** in an in-process Postgres (**PGlite**) with Supabase's `auth`, `storage`, `pg_net` and Vault stubbed, then exercises the access matrix as each role: a viewer cannot write, an officer cannot approve a release, an audit row cannot be deleted, the same asset cannot be issued twice, the notify triggers queue the right kind. No network, so it runs in the pre-commit hook. `check-rls.mjs` proves the same on the real project. |
+| `check-anon.mjs` | Probes the **live** project holding only the public key: no table readable, no RPC callable beyond §5.5. |
+| `check-xlsx.mjs` | A workbook from `lib/xlsx.js` reads back with every zip entry's CRC correct (Excel calls a bad CRC "corrupt"), escaping and numbers intact. |
+| `check-hw-import.mjs` | Workbooks written stored **and** deflated the way Excel writes them are read by `lib/xlsxRead.js` and planned by `lib/hardwareImport.js`: dates and MACs normalise, a duplicate key, bad status or accessory overwrite is refused. |
 
-Keep a `tools/hooks/pre-commit` that runs the cheap ones.
+Keep a `tools/hooks/pre-commit` that runs the cheap, offline ones
+(`check-schema`, `check-xlsx`, `check-hw-import`, `check-help`).
 
 ---
 
@@ -1409,7 +1689,7 @@ place to stop and show someone.
 2. **Shell and auth.** `next.config.js`, Tailwind token layer, `lib/supabaseClient.js`,
    `ui.js`, `AuthProvider` + `AuthGate`, `AppShell`, the landing and login screens,
    `app/version.js`. Verify with `check-pages-load.mjs` against empty tables.
-3. **The register.** `/` with KPI cards, filters, phone cards and desktop table,
+3. **The register.** One record list (later `RegisterPage`, §7.4) with KPI cards, filters, phone cards and desktop table,
    row expansion, audit history, CSV export. Then `/assets`.
 4. **Allocation.** `allocate_asset` and the return path, `/allocate`, the
    assignment history, `trg_sync_asset_status`. Verify with `check-allocate.mjs`.
@@ -1417,7 +1697,7 @@ place to stop and show someone.
    with photos and the PDF receipt, `/status`, `/entry` with the approval box and
    `trg_guard_asset_release`.
 6. **Email.** Vault secrets, `get_notify_config()`, `notify_secret()`,
-   `notify-new-request`, `notify-handover`, `notify-release`, `store-receipt`,
+   the one `notify` function (kinds `new_request`, `release`, `handover`, `receipt`), `assign-action`,
    `notify_log` + `logSend`, `assign_token` + `/assign`, `notify-guard.mjs`.
    Verify with `check-assign.mjs` **and** `check-receipt.mjs` under solo mode.
 7. **The rest of the screens.** `/warranty`, `lib/alerts.js` + the bell + the
@@ -1427,8 +1707,36 @@ place to stop and show someone.
    `FEATURES.md`, `EMAIL_PIPELINE.md`, `CHANGELOG.md`, `VERSION_HISTORY.md`.
 9. **Packaging.** `tools/make-zip.mjs`, `check-zip-perms.mjs`, `check-nopng.mjs`,
    `.htaccess`, `manifest.json`, `sw.js`, icons. Then the full check suite.
-10. **Optional, only if asked.** Web Push (§6.13); a `pg_cron` warranty digest
+10. **Three record lists (1.0.0).** `categories` + the FK on `assets.asset_type`;
+    hardware fields and `hw_status`; `fa_code`, `quantity`, `item_location`
+    (re-declaring `audit_asset_change()` each time); `RegisterPage` with the
+    three routes; `HardwareForm`, `lib/hardware.js`, Excel export and
+    `HardwareImport` + `lib/xlsxRead.js` + `lib/hardwareImport.js`. Load IT's
+    sheets (PC list, accessories list, Finance FAR) through the import, not SQL.
+    Then switch email off (§6.0).
+11. **Scan QR (1.1.0)** on the three forms.
+12. **IT's wording (1.2.x).** Custody `Assigned` → `In use` (replace the
+    functions **before** renaming the rows — the old guard refuses `In use` on a
+    held asset); hardware statuses incl. `Handover` and `Returned`; Handover /
+    Return labels; the five-column IT Inventory table with the status dropdown;
+    the Sort box; 6-digit IDs and 6-character passwords.
+13. **Dashboard (1.3.0)** at `/`.
+14. **Process Flow (1.4.0)** at `/flow`.
+15. **Request fields and loans (1.5.0).** New request columns,
+    `submit_equipment_request` v2, `loan_request`, `loanable_accessories()`,
+    `submit_loan_request()`, `/loan`, the Loan requests tab, bell count; receipt
+    PDF and `notify` show the new fields.
+16. **Requester email and HODs (1.6.0).** `hod` + `hod_names()`,
+    `requester_email` / `hod_email`, `submit_equipment_request` v3, the HOD
+    combo.
+17. **Not yet done, next.** Turn email on through Resend (§6.0, §6.9), reusing
+    MTrack's account; then mail the requester and the HOD on submit using
+    `requester_email` / `hod_email`.
+18. **Optional, only if asked.** Web Push (§6.13); a `pg_cron` warranty digest
     (§6.11).
+
+Bump `app/version.js`, `VERSION_HISTORY.md` and `CHANGELOG.md` with each step;
+each step from 10 on is one released version.
 
 ---
 

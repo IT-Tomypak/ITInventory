@@ -22,7 +22,9 @@ INSERT/UPDATE on equipment_request or asset_assignment
 public.notify_post()        pg_net, async, after COMMIT, 20 s timeout, errors swallowed
    ▼  POST /functions/v1/notify   header x-webhook-secret
 Edge Function `notify`      reads Vault via get_notify_config()
-   ├─ new_request → recipients with purpose equipment_request (+ Allocate / Assign buttons)
+   ├─ hod_request → the request's hod_email (+ Approve / Reject buttons)
+   ├─ it_review   → recipients with purpose equipment_request, after the HOD approves
+   ├─ hod_rejected → the request's requester_email
    ├─ release     → release_pending (mode pending) or release_decided
    ├─ handover    → the holder's own staff email (+ Confirm receipt button)
    └─ receipt     → PDF into the private `receipts` bucket (no email)

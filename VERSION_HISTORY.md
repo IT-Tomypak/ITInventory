@@ -6,6 +6,13 @@ of the sidebar so the deployed build can be identified on screen.
 
 | Version | Date | What shipped |
 |---|---|---|
+| 1.9.3 | 2026-10-15 | Photos on IT hardware registration; fixed-asset QR fills Asset Tag / Make / Model; serial-only Scan button on every register form; scanner can import an image from the gallery. |
+| 1.9.2 | 2026-10-14 | IT Inventory: fixed series numbering (TPPC, TPLL, TPDL, TPML) tracks the current highest number per series; new items automatically increment and must be strictly greater than the current number. Quick-select series buttons and validation in hardware form. |
+| 1.9.1 | 2026-10-14 | IT Inventory: setting status to **Vacant** (via table dropdown, bulk action, hardware form, or Excel import) automatically moves the current user into **Previous user** and frees the device. |
+| 1.9.0 | 2026-10-13 | Status **Retired** is now **Damaged** (needs migration `20261013030000_damaged_status`). The status cards on IT Accessories and the Dashboard's custody row also count **Lost/Stolen**. |
+| 1.8.0 | 2026-10-13 | IT Accessories: **Bulk add** registers several items of one category in one save, each with the next free tag. Serial numbers are optional. Everything else as 1.7.1. |
+| 1.7.1 | 2026-10-13 | Equipment requests are approved in two steps: the requester's **HOD** approves or rejects from an email, then **IT** decides in ITrack. Assign handler, Set status, Allocate and Ask for release are gone from the request queue. Needs migrations `20261013000000`, `20261013010000`, `20261013020000` and the `notify` function redeployed. HOD mail is sent only once the mail triggers are enabled. |
+| 1.7.0 | 2026-10-13 | Not for upload (use 1.7.1): built before the request queue was changed, so it still shows Assign handler, Set status, Allocate and Ask for release. |
 | 1.6.0 | 2026-10-12 | Hardware request: the requester gives their own email, and **HOD Department** is a type-to-search list of IT's HODs, each paired with an email in the database. Needs migration `20261012050000_request_email_and_hods`. No email is sent yet. |
 | 1.5.0 | 2026-10-12 | Hardware request form asks for Requester name, Employee no, Department, HOD Department, Request for Service(s) (tick several) and an optional Description. New public **Borrow an Accessory** loan request and a **Loan requests** tab for IT. Needs migration `20261012040000_request_fields_and_loans` and the `notify` function redeployed. |
 | 1.4.0 | 2026-10-12 | New **Process Flow** page: IT's procedure flowcharts for hardware requests, handover and return, and accessory loans, for reference. |

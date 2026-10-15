@@ -22,6 +22,7 @@ export default function AssignPage() {
   const [link, setLink] = useState(null);   // { token, choice }
   const [state, setState] = useState(null); // assignment_link() result
   const [sig, setSig] = useState("");
+  const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -34,14 +35,17 @@ export default function AssignPage() {
   async function confirm(e) {
     e.preventDefault();
     setBusy(true);
-    const r = await call({ ...link, signature: sig, confirm: true });
+    // A HOD rejection carries its remarks where the other actions carry a choice.
+    const r = await call({ ...link, ...(reject && { choice: note }), signature: sig, confirm: true });
     setBusy(false);
     // A wrong ID number leaves the link usable: show the reason and keep the form.
-    if (!r.ok && state?.action === "ack" && /ID number/.test(r.reason)) return setState({ ...state, error: r.reason });
+    if (!r.ok && signed && /ID number/.test(r.reason)) return setState({ ...state, error: r.reason });
     setState(r);
   }
 
   const ack = state?.action === "ack";
+  const reject = state?.action === "hod_reject";
+  const signed = ack || reject || state?.action === "hod_approve";
   return (
     <PublicPage title={ack ? "Confirm receipt" : "Confirm action"}>
       <Card className="p-4 sm:p-6" data-testid="assign-result">
@@ -68,7 +72,14 @@ export default function AssignPage() {
         {state?.ok && !state.done && (
           <form onSubmit={confirm}>
             <p className="text-base font-medium">{state.what}?</p>
-            {ack && (
+            {reject && (
+              <label className="mt-4 block text-sm">
+                Reason for rejecting
+                <textarea rows={3} className={cn(inputCls, "mt-1 text-base")} required maxLength={500}
+                  value={note} onChange={(e) => setNote(e.target.value)} />
+              </label>
+            )}
+            {signed && (
               <label className="mt-4 block text-sm">
                 Your ID number
                 <input className={cn(inputCls, "mt-1 text-base")} inputMode="numeric" autoComplete="off" required
@@ -76,8 +87,8 @@ export default function AssignPage() {
               </label>
             )}
             {state.error && <p role="alert" className="mt-2 text-sm text-danger">{state.error}</p>}
-            <button disabled={busy} className="mt-4 w-full rounded-xl bg-brand px-4 py-3 text-base font-medium text-brand-fg disabled:opacity-50 sm:w-auto">
-              {busy ? "Working…" : ack ? "Confirm receipt" : "Confirm"}
+            <button disabled={busy} className={cn("mt-4 w-full rounded-xl px-4 py-3 text-base font-medium disabled:opacity-50 sm:w-auto", reject ? "bg-danger text-white" : "bg-brand text-brand-fg")}>
+              {busy ? "Working…" : ack ? "Confirm receipt" : reject ? "Reject request" : state.action === "hod_approve" ? "Approve request" : "Confirm"}
             </button>
             <p className="mt-3 text-xs text-muted">This link works once and expires 7 days after the email was sent.</p>
           </form>

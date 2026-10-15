@@ -10,7 +10,8 @@
 import zlib from "node:zlib";
 import { buildXlsx, zipStore } from "../lib/xlsx.js";
 import { readXlsx } from "../lib/xlsxRead.js";
-import { parseDate, parseQr, planImport } from "../lib/hardwareImport.js";
+import { parseAssetQr, parseDate, parseQr, planImport } from "../lib/hardwareImport.js";
+import { parseTag, getSeriesStats, getNextTagForSeries } from "../lib/hardware.js";
 
 let fails = 0;
 const check = (cond, msg) => { console.log((cond ? "PASS " : "FAIL ") + msg); if (!cond) fails++; };
@@ -20,6 +21,14 @@ check(parseQr("  5CD1234XYZ ").serial_no === "5CD1234XYZ", "plain QR text is the
 check(JSON.stringify(parseQr("S/N: ABC123\nModel: Latitude 5440\nBrand: Dell")) === JSON.stringify({ serial_no: "ABC123", model: "Latitude 5440", make: "Dell" }), "Key: value lines map to fields");
 check(parseQr("{\"Serial_number\":\"X9\",\"Mac_address\":\"aabbccddeeff\"}").mac_address === "AA-BB-CC-DD-EE-FF", "JSON uses sheet headers, MAC normalised");
 check(parseQr("https://qrl.dell.com/ABC").serial_no === "https://qrl.dell.com/ABC", "a URL (colon, no key) is kept whole");
+{
+  const want = JSON.stringify({ asset_tag: "CE-23-A0100374", make: "VIEWSONIC", model: "VA2432-H 23.8\" WIDE/LCD/FHD MONITOR" });
+  check(JSON.stringify(parseAssetQr("CE-23-A0100374 VIEWSONIC VA2432-H 23.8\" WIDE/LCD/FHD MONITOR")) === want, "fixed-asset QR on one line");
+  check(JSON.stringify(parseAssetQr("CE-23-A0100374\nVIEWSONIC\nVA2432-H 23.8\" WIDE/LCD/FHD MONITOR")) === want, "fixed-asset QR one field per line");
+  check(JSON.stringify(parseAssetQr("CE-23-A0100374\r\nVIEWSONIC VA2432-H 23.8\" WIDE/LCD/FHD MONITOR")) === want, "fixed-asset QR tag line + make/model line");
+  check(JSON.stringify(parseAssetQr("CE-23-A0100374")) === JSON.stringify({ asset_tag: "CE-23-A0100374" }), "fixed-asset QR tag only");
+  check(parseAssetQr("SN: X1\nBrand: Dell").serial_no === "X1", "fixed-asset QR with keys uses parseQr");
+}
 
 // ---- dates
 check(parseDate("3/12/2025") === "2025-12-03", "d/m/yyyy is day first");
@@ -113,8 +122,8 @@ check(a.f.employee === "Ali Bin Abu" && a.warnings.some((w) => /Employee ID 1001
 check(a.kind === "error" && a.errors.some((e) => /Serial_number S1 is also on TPDL001/.test(e)), "duplicate serial (file row vs file row) blocks the row");
 
 const b = row("TPLL002");
-check(b.kind === "update" && b.f.employee === "" && b.f.mac_address === "AA-BB-CC-DD-EE-FF",
-  "Vacant + blank employee frees the device; other blank cells keep stored values");
+check(b.kind === "update" && b.f.employee === "" && b.f.previous_user === "Bea" && b.f.mac_address === "AA-BB-CC-DD-EE-FF",
+  "Vacant + blank employee frees the device, moves current user to previous_user; other blank cells keep stored values");
 const n = row("TPLL009");
 check(n.kind === "new" && n.newVendor === "New Supplier" && n.f.purchase_date === "2023-05-10", "new device with a new vendor");
 const d = row("TPDL001");
@@ -133,6 +142,14 @@ check(loc.items[0].f.item_location === "IT Store - Cabinet 2" && loc.items[0].ch
 let noHeader = false;
 try { planImport([["foo", "bar"]], ctx); } catch { noHeader = true; }
 check(noHeader, "a sheet without a Device_name header is refused");
+
+// ---- series numbering (TPPC, TPLL, TPDL, TPML)
+const sampleRows = [{ asset_tag: "TPPC246" }, { asset_tag: "TPPC200" }, { asset_tag: "TPLL001" }, { asset_tag: "TPLL002" }];
+const stats = getSeriesStats(sampleRows);
+check(stats.get("TPPC").maxNum === 246, "TPPC current number is 246");
+check(getNextTagForSeries("TPPC", stats) === "TPPC247", "TPPC next item is TPPC247 (> 246)");
+check(getNextTagForSeries("TPLL", stats) === "TPLL003", "TPLL next item is TPLL003 (> 2)");
+check(getNextTagForSeries("TPML", stats) === "TPML001", "TPML with no existing items starts at TPML001");
 
 console.log(fails ? fails + " FAILED" : "ALL PASS");
 process.exit(fails ? 1 : 0);

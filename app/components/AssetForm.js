@@ -6,6 +6,7 @@ import { Camera, ImagePlus, Save, X } from "lucide-react";
 import { supabase } from "../../lib/supabaseClient";
 import { LISTS, MANUAL_STATUSES } from "../../lib/assets";
 import { findStaff } from "../../lib/hardware";
+import { parseAssetQr } from "../../lib/hardwareImport";
 import { joinPhotos, splitPhotos, uploadPhoto } from "../../lib/photos";
 import { HoldToConfirmButton, toast } from "./ui";
 import QrScan from "./QrScan";
@@ -13,6 +14,59 @@ import QrScan from "./QrScan";
 export const inputCls = "w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand disabled:opacity-60";
 const nz = (v) => (typeof v === "string" ? v.trim() || null : v ?? null);
 const num = (v) => (v === "" || v == null ? null : Number(v));
+
+// Photo strip with Camera and Gallery buttons; shared with HardwareForm.
+export function PhotoPicker({ photos, setPhotos, setBusy }) {
+  async function addPhotos(e) {
+    const files = [...e.target.files];
+    e.target.value = "";
+    setBusy(true);
+    try {
+      const urls = [];
+      for (const file of files) urls.push(await uploadPhoto(file, "assets"));
+      setPhotos((p) => [...p, ...urls]);
+    } catch (err) {
+      toast.error("Photo upload failed: " + err.message);
+    }
+    setBusy(false);
+  }
+  const tile = "flex h-20 w-20 cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border text-xs text-muted hover:border-brand";
+  return (
+    <div className="col-span-full">
+      <span className="mb-1 block text-xs text-muted">Photos</span>
+      <div className="flex flex-wrap gap-2">
+        {photos.map((u) => (
+          <span key={u} className="relative">
+            {/* eslint-disable-next-line @next/next/no-img-element */}
+            <img src={u} alt="" className="h-20 w-20 rounded-lg border border-border object-cover" />
+            <button type="button" aria-label="Remove photo" onClick={() => setPhotos((p) => p.filter((x) => x !== u))}
+              className="absolute -right-1.5 -top-1.5 rounded-full bg-danger p-0.5 text-white"><X className="h-3.5 w-3.5" /></button>
+          </span>
+        ))}
+        {/* Two inputs: Android's photo picker hides the camera when capture is absent. */}
+        <label className={tile}>
+          <Camera className="h-5 w-5" /> Camera
+          <input type="file" accept="image/*" capture="environment" className="sr-only" onChange={addPhotos} />
+        </label>
+        <label className={tile}>
+          <ImagePlus className="h-5 w-5" /> Gallery
+          <input type="file" accept="image/*" multiple className="sr-only" onChange={addPhotos} />
+        </label>
+      </div>
+    </div>
+  );
+}
+
+// Serial input with its own Scan button: the whole QR text becomes the serial.
+export function SerialInput({ value, onChange, setValue, onExisting }) {
+  return (
+    <div className="flex gap-2">
+      <input className={inputCls} value={value} onChange={onChange} />
+      <QrScan label="Scan" onScan={(v) => setValue(v.serial_no)} onExisting={onExisting}
+        parse={(t) => ({ serial_no: String(t).trim() })} />
+    </div>
+  );
+}
 
 function L({ label, children, wide }) {
   return (
@@ -47,20 +101,6 @@ export default function AssetForm({ asset, lookups, list, nextTag, departments, 
   const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value }));
   // A scan fills only fields this form has; whatever is typed elsewhere stays.
   const scanned = (v) => setF((s) => ({ ...s, ...Object.fromEntries(Object.entries(v).filter(([k]) => k in s)) }));
-
-  async function addPhotos(e) {
-    const files = [...e.target.files];
-    e.target.value = "";
-    setBusy(true);
-    try {
-      const urls = [];
-      for (const file of files) urls.push(await uploadPhoto(file, "assets"));
-      setPhotos((p) => [...p, ...urls]);
-    } catch (err) {
-      toast.error("Photo upload failed: " + err.message);
-    }
-    setBusy(false);
-  }
 
   async function save(e) {
     e.preventDefault();
@@ -119,7 +159,7 @@ export default function AssetForm({ asset, lookups, list, nextTag, departments, 
     <form onSubmit={save}>
       <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
         <h2 id="asset-form-title" className="text-lg font-semibold">{editing ? `Update ${asset.asset_tag}` : "Register an asset"}</h2>
-        <QrScan onScan={scanned} onExisting={onExisting} />
+        <QrScan onScan={scanned} onExisting={onExisting} parse={list === "fixed" ? parseAssetQr : undefined} />
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
         <L label="Asset tag *"><input className={inputCls} value={f.asset_tag} onChange={set("asset_tag")} required autoFocus={!editing} /></L>
@@ -135,7 +175,10 @@ export default function AssetForm({ asset, lookups, list, nextTag, departments, 
         </L>
         <L label="Make"><input className={inputCls} value={f.make} onChange={set("make")} /></L>
         <L label="Model"><input className={inputCls} value={f.model} onChange={set("model")} /></L>
-        <L label="Serial no"><input className={inputCls} value={f.serial_no} onChange={set("serial_no")} /></L>
+        <div className="block">
+          <span className="mb-1 block text-xs text-muted">Serial no</span>
+          <SerialInput value={f.serial_no} onChange={set("serial_no")} setValue={(v) => setF((s) => ({ ...s, serial_no: v }))} onExisting={onExisting} />
+        </div>
         <L label="Status">
           {custody ? (
             <>
@@ -198,28 +241,7 @@ export default function AssetForm({ asset, lookups, list, nextTag, departments, 
         <L label="Spec notes (CPU / RAM / disk…)" wide>
           <textarea rows={3} className={inputCls} value={f.spec_notes} onChange={set("spec_notes")} />
         </L>
-        <div className="col-span-full">
-          <span className="mb-1 block text-xs text-muted">Photos</span>
-          <div className="flex flex-wrap gap-2">
-            {photos.map((u) => (
-              <span key={u} className="relative">
-                {/* eslint-disable-next-line @next/next/no-img-element */}
-                <img src={u} alt="" className="h-20 w-20 rounded-lg border border-border object-cover" />
-                <button type="button" aria-label="Remove photo" onClick={() => setPhotos((p) => p.filter((x) => x !== u))}
-                  className="absolute -right-1.5 -top-1.5 rounded-full bg-danger p-0.5 text-white"><X className="h-3.5 w-3.5" /></button>
-              </span>
-            ))}
-            {/* Two inputs: Android's photo picker hides the camera when capture is absent. */}
-            <label className="flex h-20 w-20 cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border text-xs text-muted hover:border-brand">
-              <Camera className="h-5 w-5" /> Camera
-              <input type="file" accept="image/*" capture="environment" className="sr-only" onChange={addPhotos} />
-            </label>
-            <label className="flex h-20 w-20 cursor-pointer flex-col items-center justify-center gap-1 rounded-lg border border-dashed border-border text-xs text-muted hover:border-brand">
-              <ImagePlus className="h-5 w-5" /> Gallery
-              <input type="file" accept="image/*" multiple className="sr-only" onChange={addPhotos} />
-            </label>
-          </div>
-        </div>
+        <PhotoPicker photos={photos} setPhotos={setPhotos} setBusy={setBusy} />
         {editing && (
           <label className="col-span-full flex items-center gap-2 text-sm">
             <input type="checkbox" checked={f.active} onChange={set("active")} /> Active (untick to hide from day-to-day lists)

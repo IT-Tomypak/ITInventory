@@ -6,7 +6,7 @@
 // camera (plain http, permission refused) and labels the live view misses.
 import { useEffect, useRef, useState } from "react";
 import { createPortal } from "react-dom";
-import { Camera, QrCode, X } from "lucide-react";
+import { Camera, ImagePlus, QrCode, X } from "lucide-react";
 import { parseQr } from "../../lib/hardwareImport";
 import { toast } from "./ui";
 
@@ -27,13 +27,14 @@ const canvasCtx = () => document.createElement("canvas").getContext("2d", { will
 
 // onScan(fields): only the fields this form has are applied by the caller.
 // onExisting(serial): true when the page found that serial and showed it instead.
-export default function QrScan({ onScan, onExisting }) {
+// parse: QR text -> fields (parseAssetQr for fixed assets, serial-only buttons).
+export default function QrScan({ onScan, onExisting, parse = parseQr, label = "Scan QR" }) {
   const [open, setOpen] = useState(false);
   const video = useRef(null);
 
   function handle(text) {
     setOpen(false);
-    const fields = parseQr(text);
+    const fields = parse(text);
     if (fields.serial_no && onExisting?.(fields.serial_no)) return;
     onScan(fields);
     toast.success(`Scanned: ${Object.values(fields).join(", ")}`);
@@ -78,20 +79,24 @@ export default function QrScan({ onScan, onExisting }) {
     }
   }
 
-  const photoInput = (cls, label) => (
+  // Camera forces the phone camera; Gallery picks a saved photo or screenshot.
+  const photoInput = (cls, text, gallery) => (
     <label className={cls}>
-      <Camera className="h-4 w-4" /> {label}
-      <input type="file" accept="image/*" capture="environment" className="sr-only" onChange={pickPhoto} />
+      {gallery ? <ImagePlus className="h-4 w-4" /> : <Camera className="h-4 w-4" />} {text}
+      <input type="file" accept="image/*" capture={gallery ? undefined : "environment"} className="sr-only" onChange={pickPhoto} />
     </label>
   );
+  const dark = "inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-white/40 px-3 py-2 text-sm text-white";
   const btn = "inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm hover:border-brand";
 
   // No camera API at all (plain http): the photo route is the only one.
-  if (typeof navigator !== "undefined" && !navigator.mediaDevices?.getUserMedia) return photoInput(btn, "Scan QR");
+  if (typeof navigator !== "undefined" && !navigator.mediaDevices?.getUserMedia) {
+    return <span className="inline-flex gap-2">{photoInput(btn, label)}{photoInput(btn, "Gallery", true)}</span>;
+  }
 
   return (
     <>
-      <button type="button" onClick={() => setOpen(true)} className={btn}><QrCode className="h-4 w-4" /> Scan QR</button>
+      <button type="button" onClick={() => setOpen(true)} className={btn}><QrCode className="h-4 w-4" /> {label}</button>
       {open && createPortal(
         <div role="dialog" aria-modal="true" aria-label="Scan QR code"
           className="fixed inset-0 z-[100] flex flex-col items-center justify-center gap-4 bg-black/90 p-4">
@@ -99,9 +104,10 @@ export default function QrScan({ onScan, onExisting }) {
             <video ref={video} playsInline muted className="block w-full" />
             <div className="pointer-events-none absolute inset-[15%] rounded-xl border-2 border-white/80" />
           </div>
-          <p className="text-sm text-white/80">Point the camera at the QR code. It is read automatically.</p>
-          <div className="flex gap-2">
-            {photoInput("inline-flex cursor-pointer items-center gap-1.5 rounded-lg border border-white/40 px-3 py-2 text-sm text-white", "Take photo instead")}
+          <p className="text-sm text-white/80">Point the camera at the QR code, or import a photo of it.</p>
+          <div className="flex flex-wrap justify-center gap-2">
+            {photoInput(dark, "Take photo instead")}
+            {photoInput(dark, "Import image", true)}
             <button type="button" onClick={() => setOpen(false)}
               className="inline-flex items-center gap-1.5 rounded-lg bg-white px-3 py-2 text-sm font-medium text-black">
               <X className="h-4 w-4" /> Cancel

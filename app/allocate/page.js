@@ -151,6 +151,12 @@ export default function AllocatePage() {
     });
     setBusy(false);
     if (error) return toast.error(error.message);
+    if (inn.asset.list === "inventory") {
+      await supabase.from("assets").update({
+        hw_status: "Vacant",
+        previous_user: inn.asset.holder || undefined,
+      }).eq("asset_id", inn.asset.asset_id);
+    }
     toast.success(`${inn.asset.asset_tag} returned by ${inn.asset.holder} — now ${inn.return_status}.`);
     setInn(EMPTY_IN);
     reload();

@@ -84,7 +84,7 @@ r = await as("admin", "select * from asset_audit where field='Purchase cost'"); 
 await as("officer", "insert into asset_assignment(asset_id, staff_id, condition_out) values (1, 2, 'Good')");
 r = await as("officer", "select status from assets"); ok(r.rows[0].status === "In use", "open assignment -> In use");
 await refused(() => as("officer", "insert into asset_assignment(asset_id, location_id) values (1, 1)"), "second open assignment");
-await refused(() => as("officer", "update assets set status='Retired' where asset_id=1"), "retire while held");
+await refused(() => as("officer", "update assets set status='Damaged' where asset_id=1"), "write off while held");
 await refused(() => as("officer", "update assets set status='In stock' where asset_id=1"), "manual In stock while held");
 await refused(() => as("officer", "insert into assets(asset_tag, asset_type, status) values ('IT-0002','Laptop','In use')"), "In use with no holder");
 await as("officer", "update asset_assignment set returned_on=current_date, return_status='In repair', condition_in='Damaged' where asset_id=1");
@@ -129,7 +129,7 @@ r = await as("officer", "select * from assignment_value"); ok(r.rows.length === 
 await as("admin", `update asset_value set purchase_cost_rm = 9999 where asset_id=${a100}`);
 r = await as("admin", `select cost_rm::float c from assignment_value where assignment_id=${asg}`); ok(r.rows[0].c === 4000, "snapshot unchanged after cost correction");
 await refused(() => as("viewer", `select return_asset(${a100})`), "viewer return");
-await refused(() => as("officer", `select return_asset(${a100}, current_date, 'Good', null, 'Retired')`), "return straight to Retired");
+await refused(() => as("officer", `select return_asset(${a100}, current_date, 'Good', null, 'Damaged')`), "return straight to Damaged");
 await as("officer", `select return_asset(${a100}, current_date, 'Damaged', 'cracked screen', 'In repair')`);
 r = await as("officer", `select status from assets where asset_id=${a100}`); ok(r.rows[0].status === "In repair", "return -> In repair");
 await refused(() => as("officer", `select return_asset(${a100})`), "return an asset nobody holds");
@@ -232,6 +232,25 @@ r = await asService("select assignment_link($1, '2', null, '198.51.100.7', true)
 r = await linkState(); ok(r.handled_by === 2 && r.used_at !== null, "confirm press wrote the handler and burnt the token");
 r = await asService("select assignment_link($1, '2', null, null, true) j", [tok]); ok(!r.rows[0].j.ok && /already used/.test(r.rows[0].j.reason), "second press refused");
 await refused(() => asAnon("select assignment_link($1, '2')", [tok]), "anon calls assignment_link directly");
+
+// Two-stage approval (20261013000000..20000): the HOD decides from an email link, then IT in the app.
+const hodReq = async () => (await db.query("insert into equipment_request(requested_by_name, department, asset_type, hod, hod_email, requester_email) values ('Hana','QA','Laptop','Mr HOD','hod@example.com','hana@example.com') returning request_id::int id, hod_approval_status h")).rows[0];
+const hodLink = async (id, action) => (await asService("select create_assignment_link($1, $2) t", [id, action])).rows[0].t;
+const press = async (t, choice, sig) => (await asService("select assignment_link($1, $2, $3, null, true) j", [t, choice, sig])).rows[0].j;
+const hodRow = (id) => db.query("select status, hod_approval_status h, hod_approved_by_name n, hod_approval_note note, release_status rs from equipment_request where request_id = $1", [id]).then((x) => x.rows[0]);
+let h1 = await hodReq(); ok(h1.h === "Pending", "a new request waits for its HOD");
+let ht = await hodLink(h1.id, "hod_approve");
+r = await press(ht, null, ""); ok(!r.ok && /ID number/.test(r.reason), "HOD approval without an ID number refused");
+r = await press(ht, null, "9001"); ok(r.done, "HOD approves from the email link " + JSON.stringify(r));
+r = await hodRow(h1.id); ok(r.h === "Approved" && r.n === "Ada Admin" && r.rs === "Pending" && r.status === "Requested", "HOD approval hands the request to IT " + JSON.stringify(r));
+await refused(() => as("officer", `update equipment_request set release_status='Approved' where request_id=${h1.id}`), "officer makes the IT decision");
+await as("approver", `update equipment_request set release_status='Approved', approval_note='in stock' where request_id=${h1.id}`);
+r = await hodRow(h1.id); ok(r.status === "Approved" && r.rs === "Approved", "IT approval moves the status with it " + JSON.stringify(r));
+h1 = await hodReq(); ht = await hodLink(h1.id, "hod_reject");
+r = await press(ht, "not in budget", "777777"); ok(r.done, "HOD rejects from the email link " + JSON.stringify(r));
+r = await hodRow(h1.id); ok(r.h === "Rejected" && r.status === "Rejected" && r.note === "not in budget" && r.n === "777777" && r.rs === null, "HOD rejection closes the request, IT never sees it " + JSON.stringify(r));
+r = await db.query("select count(*)::int n from net.calls where body->>'kind' in ('hod_request', 'it_review', 'hod_rejected')");
+ok(r.rows[0].n === 0, "email paused: no HOD / IT review mail is queued");
 await refused(() => asAnon("select get_notify_config()"), "anon reads notify secrets");
 await refused(() => as("officer", "select get_notify_config()"), "officer reads notify secrets");
 await refused(() => as("officer", `select create_assignment_link(${req1}, 'allocate')`), "officer mints an email link");
