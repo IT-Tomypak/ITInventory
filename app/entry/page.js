@@ -276,7 +276,7 @@ export default function EntryPage() {
     const { data, error } = await supabase.from("equipment_request").insert({
       requested_by_name: fields.name, department: fields.department, asset_type: fields.services[0], urgency: fields.urgency,
       employee_no: fields.employee_no, hod: fields.hod, services: fields.services.join(", "),
-      requester_email: fields.email.toLowerCase(), hod_email: hods.find((h) => h.name === fields.hod)?.email ?? null,
+      requester_email: fields.email.toLowerCase() || null, hod_email: hods.find((h) => h.name === fields.hod)?.email ?? null,
       justification: fields.justification || null, attachment_path: urls.join("\n") || null,
     }).select("*").single();
     if (error) throw new Error(error.message);

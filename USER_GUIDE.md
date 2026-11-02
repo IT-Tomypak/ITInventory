@@ -127,20 +127,27 @@ knows who holds what.
 
 **Handover** (issue an item):
 
-1. **Asset to issue**: search by tag, serial, make or model. Only items that are
-   In stock appear.
-2. **Holder**: pick a **Person**, or a **Location** for shared equipment.
+1. **Assets to issue**: search by tag, serial, make or model, and tick every item
+   the person is receiving (a PC, mouse and keyboard, say). Only items nobody
+   holds appear. Changing the category keeps what is already selected.
+2. **Holder**: pick a **Person**, or a **Location** for shared equipment. A
+   person's Employee ID is shown here and filled in on the handover form.
 3. **Details**: the issue date, the **Condition out** (e.g. "with charger and
    bag"), and optionally the request it fulfils. Setting **Due back** makes it a
    loan.
-4. Press **Issue asset** (or **Loan asset**).
+4. Press **Issue asset** (or **Loan asset**). A person gets one handover form to
+   sign, listing up to 8 items.
 
 If the person has an email address in their staff record, they receive a
-handover email asking them to confirm receipt.
+handover email for each item, asking them to confirm receipt.
 
-**Return** (take an item back): pick the **Asset to return**, set the
-**Returned on** date and **Condition in**, and choose where it **Goes back to**:
-In stock, or In repair.
+**Return** (take items back): tick the **Assets to return**, set the
+**Returned on** date and **Condition in**, and choose where they **Go back to**:
+In stock, or In repair. The date, condition and reason apply to every item
+ticked.
+
+If one item is refused, the others still go through and the refused one stays
+selected.
 
 Two people cannot issue the same item at once; the second gets a clear message.
 

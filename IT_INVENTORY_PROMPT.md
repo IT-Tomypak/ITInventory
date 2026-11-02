@@ -385,7 +385,7 @@ an admin adds on Data Management, not a migration; the FK cascades a rename onto
 every asset. Seed: inventory `iPad`, `Laptop`, `Desktop`; accessory `Adapter`,
 `Cable`, `Charger`, `Headset`, `HP Adapter`, `Keyboard`, `Laptop Bag`,
 `MacBook Adapter`, `Monitor`, `Mouse`, `RAM`, `Screwdriver set`, `SSD`,
-`USB Adapter`, `USB Cable`, `USB Flash Drive`; fixed `Computer`, `Display & AV`,
+`USB Cable`, `External Hard Disk`; fixed `Computer`, `Display & AV`,
 `CCTV & Access`, `Network`, `Server Room`, `Storage`, `Camera`, `Printer`,
 `Software`. `equipment_request.asset_type` keeps its own fixed enum
 (`asset_type_t`): a requester asks for a *kind of device*, which is a different

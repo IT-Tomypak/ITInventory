@@ -13,11 +13,14 @@ import { downloadCsv } from "../../lib/csv";
 import { downloadXlsx } from "../../lib/xlsx";
 import { useAuth } from "./AuthProvider";
 import AssetDetail from "./AssetDetail";
-import AssetForm, { inputCls } from "./AssetForm";
+import AssetForm, { INK, inputCls } from "./AssetForm";
 import BulkAddForm from "./BulkAddForm";
 import { getNextTagForSeries } from "../../lib/hardware";
 import HardwareForm from "./HardwareForm";
 import HardwareImport from "./HardwareImport";
+import InkStock from "./InkStock";
+import QrScan from "./QrScan";
+import { parseAssetQr, parseQr } from "../../lib/hardwareImport";
 import {
   Card, EmptyState, HoldToConfirmButton, KpiCard, KpiSkeleton, ModalPortal, PageHeader, Pagination,
   SortableTh, StatusBadge, TableSkeleton, cn, toast,
@@ -37,7 +40,6 @@ const STATUS_KPIS = [
 export const LISTING_KPIS = STATUS_KPIS.filter((s) => s.status !== "Damaged");
 // IT Hardware counts its own status words (assets.hw_status), not custody status.
 export const HW_KPIS = [
-  { status: "Registered", icon: Package, tone: "brand" },
   { status: "Active", icon: UserCheck, tone: "info" },
   { status: "Handover", icon: ArrowLeftRight, tone: "warn" },
   { status: "Returned", icon: Archive, tone: "muted" },
@@ -78,7 +80,7 @@ const KPI_GRID = { 4: "sm:grid-cols-4", 5: "sm:grid-cols-3 xl:grid-cols-5", 6: "
 const custodyHref = (r) => (r.holder || (r.status === "In stock" && r.active) ? `/allocate/?asset=${r.asset_id}` : null);
 const custodyLabel = (r) => (r.holder ? "Return" : "Handover");
 
-const EMPTY_FILTERS = { q: "", type: "", status: "", department: "", location: "", warranty: "", from: "", to: "" };
+const EMPTY_FILTERS ={ q: "", type: "", status: "", department: "", location: "", warranty: "", from: "", to: "" };
 
 // `list` ("inventory" | "accessory" | "fixed") is the listing this page shows.
 
@@ -258,17 +260,31 @@ export default function RegisterPage({ list }) {
   const closeModal = () => setModal(null);
   // Register + Scan QR of a serial already stored: show that record instead.
   // A serial field may hold two, " / " separated.
+  const serialsOf = (a) => a.serial_no?.toUpperCase().split(/\s*\/\s*/) ?? [];
+  const showRecord = (r) => (r.list !== list
+    ? window.location.assign(`/${LIST_ROUTES[r.list]}/?q=${encodeURIComponent(r.asset_tag)}&open=1`)
+    : setModal({ mode: "detail", asset: r }));
   function showExisting(serial) {
-    const s = serial.toUpperCase();
-    const r = data.rows.find((a) => a.serial_no?.toUpperCase().split(/\s*\/\s*/).includes(s));
+    const r = data.rows.find((a) => serialsOf(a).includes(serial.toUpperCase()));
     if (!r) return false;
     toast.success(`Serial ${serial} is already registered as ${r.asset_tag}.`);
-    if (r.list !== list) window.location.assign(`/${LIST_ROUTES[r.list]}/?q=${encodeURIComponent(r.asset_tag)}&open=1`);
-    else setModal({ mode: "detail", asset: r });
+    showRecord(r);
     return true;
   }
-  const afterSave = () => { closeModal(); reload(); };
+  // Check: a scanned label is matched on asset tag or serial, in any listing.
+  function checkScan(text) {
+    const keys = new Set([text, ...Object.values(parseQr(text)), ...Object.values(parseAssetQr(text))]
+      .map((v) => String(v).trim().toUpperCase()).filter(Boolean));
+    const r = data.rows.find((a) => keys.has(a.asset_tag.toUpperCase()) || serialsOf(a).some((s) => keys.has(s)));
+    if (!r) return toast.error(`Not registered: ${text.trim()}`);
+    toast.success(`${r.asset_tag}: ${(r.list === "inventory" ? r.hw_status : r.status) || "no status"}${r.holder ? `, held by ${r.holder}` : ""}.`);
+    showRecord(r);
+  }
+  // inkRev remounts InkStock so a registered ink shows up.
+  const [inkRev, setInkRev] = useState(0);
+  const afterSave = () => { closeModal(); reload(); setInkRev((n) => n + 1); };
   const kpis = hw ? HW_KPIS : fx ? [] : LISTING_KPIS;
+  const ink = cur === "accessory" && filters.type === INK;
   // Next free tag in this listing's series (e.g. TPPC247 after TPPC246 for hardware, ACC-004 for accessories).
   const nextTag = useMemo(() => {
     if (hw) return getNextTagForSeries("TPPC", data?.rows || []);
@@ -283,6 +299,9 @@ export default function RegisterPage({ list }) {
       <PageHeader title={LISTS[list]} help="record-lists"
         subtitle={`Everything filed under ${LISTS[list]} categories, live from the database.`}
         actions={<>
+          {/* onExisting sees the raw text first; returning true skips the form-fill path. */}
+          {data && <QrScan label="Check" parse={(text) => ({ serial_no: text })} onScan={() => {}}
+            onExisting={(text) => (checkScan(text), true)} />}
           {isAdmin && (
             <a href="/manage/" className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-2 text-sm">
               <Tags className="h-4 w-4" /> Categories
@@ -314,18 +333,26 @@ export default function RegisterPage({ list }) {
 
       {error && <Card className="mb-4 p-4 text-danger" role="alert">Error loading data: {error}</Card>}
 
-      {!data && !error ? <KpiSkeleton count={kpis.length} /> : data && (
+      {/* Category picker over the status cards: same state as the Category filter. */}
+      {data && cur === "accessory" && (
+        <select aria-label="Category" className={cn(inputCls, "mb-3 w-auto")} value={filters.type} onChange={(e) => setFilter("type", e.target.value)}>
+          <option value="">All categories</option>{categories.map((t) => <option key={t}>{t}</option>)}
+          <option>{INK}</option>
+        </select>
+      )}
+
+      {ink ? <InkStock key={inkRev} canEdit={!isViewer} /> : !data && !error ? <KpiSkeleton count={kpis.length} /> : data && (
         <div className={cn("grid grid-cols-2 gap-3", KPI_GRID[kpis.length])}>
           {kpis.map((s) => (
             <KpiCard key={s.status} label={s.status} icon={s.icon} tone={s.tone}
-              value={rows.filter((r) => statusOf(r) === s.status).length}
+              value={rows.filter((r) => statusOf(r) === s.status && (!filters.type || r.asset_type === filters.type)).length}
               active={filters.status === s.status}
               onClick={() => setFilter("status", filters.status === s.status ? "" : s.status)} />
           ))}
         </div>
       )}
 
-      <Card className="mt-4 p-3 md:p-4">
+      {!ink && <Card className="mt-4 p-3 md:p-4">
         <div className="flex gap-2">
           <div className="relative flex-1">
             <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted" />
@@ -529,7 +556,7 @@ export default function RegisterPage({ list }) {
             </>
           )}
         </div>
-      </Card>
+      </Card>}
 
       <ModalPortal wide open={!!modal} onClose={closeModal} labelledBy={modal?.mode === "detail" ? "asset-detail-title" : modal?.mode === "import" ? "import-title" : "asset-form-title"}>
         {modal?.mode === "detail" && (
@@ -564,7 +591,7 @@ export default function RegisterPage({ list }) {
         {(modal?.mode === "edit" || modal?.mode === "new") && !isViewer && (
           hw ? <HardwareForm asset={modal.asset} activate={modal.activate} lookups={data.lookups} departments={departments} isAdmin={isAdmin} nextTag={nextTag} existingRows={rows}
             onSaved={afterSave} onDeleted={afterSave} onCancel={closeModal} onExisting={modal.asset ? undefined : showExisting} />
-          : <AssetForm asset={modal.asset} lookups={data.lookups} list={cur} nextTag={nextTag} departments={departments} isAdmin={isAdmin}
+          : <AssetForm asset={modal.asset} defaultType={ink ? INK : undefined} lookups={data.lookups} list={cur} nextTag={nextTag} departments={departments} isAdmin={isAdmin}
             onSaved={afterSave} onDeleted={afterSave} onCancel={closeModal} onExisting={modal.asset ? undefined : showExisting} />
         )}
       </ModalPortal>

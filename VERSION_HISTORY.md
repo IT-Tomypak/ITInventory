@@ -6,6 +6,14 @@ of the sidebar so the deployed build can be identified on screen.
 
 | Version | Date | What shipped |
 |---|---|---|
+| 1.10.1 | 2026-11-02 | Allocate / Return: hand over or return several items on one form. The handover form lists them all (up to 8) with the person's Employee ID. |
+| 1.10.0 | 2026-10-30 | IT Inventory status **Registered** is gone: those devices are now Active (someone holds it) or Vacant. Allocate / Return: Handover lists only items nobody holds — an in-use item must be returned first, then handed over again. Category dropdown on Handover and Return. Needs migration `20261030000000_drop_hw_registered` applied **before** uploading. |
+| 1.9.9 | 2026-10-27 | Request equipment and Borrow an accessory no longer ask for a name: it is taken from the staff list by the Staff ID. Needs migration `20261027000000_name_from_staff_id` applied **before** uploading. |
+| 1.9.8 | 2026-10-23 | Allocate / Return: **Handover** searches every record (IT Hardware, Accessories, Fixed Assets), not only In-stock items; handing over an item someone holds transfers it. Search on both tabs also matches device type, department, location and FA code. |
+| 1.9.7 | 2026-10-16 | **Check** button (scan a QR) on IT Inventory, IT Accessories and IT Fixed Assets: shows the record if it exists. Projector and UPS categories. Email is on: admins are emailed on every new equipment request and loan request. |
+| 1.9.6 | 2026-10-16 | IT Accessories: pick a category above the status cards to see its counts. **Ink** shows stock left per brand and colour; register ink from Register asset, take one with −. Needs migration `20261016000000_ink_stock`. |
+| 1.9.5 | 2026-10-15 | Handover to a person downloads a handover form (PDF) for them to sign. Request equipment and Borrow an accessory need the person's **Staff ID** and **Password** (the staff ID); email is optional. Needs migration `20261015000000_staff_login_on_public_forms` and staff IDs filled in on staff records. |
+| 1.9.4 | 2026-10-15 | Serial Scan button reads the number after "S/N", "SN:" or "Serial number:" in the QR text. |
 | 1.9.3 | 2026-10-15 | Photos on IT hardware registration; fixed-asset QR fills Asset Tag / Make / Model; serial-only Scan button on every register form; scanner can import an image from the gallery. |
 | 1.9.2 | 2026-10-14 | IT Inventory: fixed series numbering (TPPC, TPLL, TPDL, TPML) tracks the current highest number per series; new items automatically increment and must be strictly greater than the current number. Quick-select series buttons and validation in hardware form. |
 | 1.9.1 | 2026-10-14 | IT Inventory: setting status to **Vacant** (via table dropdown, bulk action, hardware form, or Excel import) automatically moves the current user into **Previous user** and frees the device. |

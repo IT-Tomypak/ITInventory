@@ -6,10 +6,14 @@ import { Camera, ImagePlus, Save, X } from "lucide-react";
 import { supabase } from "../../lib/supabaseClient";
 import { LISTS, MANUAL_STATUSES } from "../../lib/assets";
 import { findStaff } from "../../lib/hardware";
-import { parseAssetQr } from "../../lib/hardwareImport";
+import { parseAssetQr, parseSerialQr } from "../../lib/hardwareImport";
 import { joinPhotos, splitPhotos, uploadPhoto } from "../../lib/photos";
 import { HoldToConfirmButton, toast } from "./ui";
 import QrScan from "./QrScan";
+
+export const INK = "Ink";
+const INK_BRANDS = ["Epson", "Canon", "HP"];
+const INK_COLORS = ["Black", "Cyan", "Magenta", "Yellow"];
 
 export const inputCls = "w-full rounded-lg border border-border bg-surface px-3 py-2 text-sm outline-none focus:border-brand focus:ring-1 focus:ring-brand disabled:opacity-60";
 const nz = (v) => (typeof v === "string" ? v.trim() || null : v ?? null);
@@ -57,13 +61,13 @@ export function PhotoPicker({ photos, setPhotos, setBusy }) {
   );
 }
 
-// Serial input with its own Scan button: the whole QR text becomes the serial.
+// Serial input with its own Scan button: fills only the serial (parseSerialQr).
 export function SerialInput({ value, onChange, setValue, onExisting }) {
   return (
     <div className="flex gap-2">
       <input className={inputCls} value={value} onChange={onChange} />
       <QrScan label="Scan" onScan={(v) => setValue(v.serial_no)} onExisting={onExisting}
-        parse={(t) => ({ serial_no: String(t).trim() })} />
+        parse={parseSerialQr} />
     </div>
   );
 }
@@ -77,13 +81,13 @@ function L({ label, children, wide }) {
   );
 }
 
-export default function AssetForm({ asset, lookups, list, nextTag, departments, isAdmin, onSaved, onDeleted, onCancel, onExisting }) {
+export default function AssetForm({ asset, lookups, list, nextTag, departments, isAdmin, onSaved, onDeleted, onCancel, onExisting, defaultType }) {
   const editing = !!asset;
   // Active categories of this listing, plus the asset's own even if retired since.
   const categories = lookups.categories.filter((c) => (!list || c.list === list) && (c.active || c.name === asset?.asset_type));
   const custody = editing && ["In use", "Loaned"].includes(asset.status);
   const [f, setF] = useState(() => ({
-    asset_tag: asset?.asset_tag ?? nextTag ?? "", asset_type: asset?.asset_type ?? categories[0]?.name ?? "",
+    asset_tag: asset?.asset_tag ?? nextTag ?? "", asset_type: asset?.asset_type ?? defaultType ?? categories[0]?.name ?? "",
     make: asset?.make ?? "", model: asset?.model ?? "", serial_no: asset?.serial_no ?? "",
     status: asset?.status ?? "In stock", location_id: asset?.location_id ?? "", department: asset?.department ?? "",
     purchase_date: asset?.purchase_date ?? "", po_no: asset?.po_no ?? "", invoice_no: asset?.invoice_no ?? "",
@@ -96,6 +100,9 @@ export default function AssetForm({ asset, lookups, list, nextTag, departments, 
   }));
   // "In use" is never written directly: the handover (allocate_asset) sets it.
   const handover = !custody && f.status === "In use";
+  // Ink is not an asset: registering it adds to the brand/colour count (InkStock).
+  const canInk = !editing && list === "accessory";
+  const ink = canInk && f.asset_type === INK;
   const [photos, setPhotos] = useState(() => splitPhotos(asset?.photo_path));
   const [busy, setBusy] = useState(false);
   const set = (k) => (e) => setF((s) => ({ ...s, [k]: e.target.type === "checkbox" ? e.target.checked : e.target.value }));
@@ -104,6 +111,15 @@ export default function AssetForm({ asset, lookups, list, nextTag, departments, 
 
   async function save(e) {
     e.preventDefault();
+    if (ink) {
+      const qty = num(f.quantity) ?? 1;
+      setBusy(true);
+      const { error } = await supabase.rpc("adjust_ink", { p_brand: f.make.trim(), p_color: f.model.trim(), p_delta: qty });
+      setBusy(false);
+      if (error) return toast.error(error.message);
+      toast.success(`${f.make.trim()} ${f.model.trim()} ink: added ${qty}.`);
+      return onSaved();
+    }
     const person = handover && findStaff(lookups.staff, f.handover_to);
     if (handover && !person) return toast.error(`${f.handover_to.trim()} is not in the staff list. Pick a name from the list, or add them on Data Management.`);
     setBusy(true);
@@ -162,7 +178,7 @@ export default function AssetForm({ asset, lookups, list, nextTag, departments, 
         <QrScan onScan={scanned} onExisting={onExisting} parse={list === "fixed" ? parseAssetQr : undefined} />
       </div>
       <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-        <L label="Asset tag *"><input className={inputCls} value={f.asset_tag} onChange={set("asset_tag")} required autoFocus={!editing} /></L>
+        {!ink && <L label="Asset tag *"><input className={inputCls} value={f.asset_tag} onChange={set("asset_tag")} required autoFocus={!editing} /></L>}
         <L label="Category *">
           <select className={inputCls} value={f.asset_type} onChange={set("asset_type")} required>
             {list ? categories.map((c) => <option key={c.name}>{c.name}</option>)
@@ -171,8 +187,20 @@ export default function AssetForm({ asset, lookups, list, nextTag, departments, 
                   {categories.filter((c) => c.list === k).map((c) => <option key={c.name}>{c.name}</option>)}
                 </optgroup>
               ))}
+            {canInk && <option>{INK}</option>}
           </select>
         </L>
+        {ink ? <>
+          <L label="Brand *">
+            <input className={inputCls} value={f.make} onChange={set("make")} list="ink-brands" required />
+            <datalist id="ink-brands">{INK_BRANDS.map((b) => <option key={b} value={b} />)}</datalist>
+          </L>
+          <L label="Colour *">
+            <input className={inputCls} value={f.model} onChange={set("model")} list="ink-colors" required />
+            <datalist id="ink-colors">{INK_COLORS.map((c) => <option key={c} value={c} />)}</datalist>
+          </L>
+          <L label="Quantity *"><input type="number" min="1" className={inputCls} value={f.quantity} onChange={set("quantity")} required /></L>
+        </> : <>
         <L label="Make"><input className={inputCls} value={f.make} onChange={set("make")} /></L>
         <L label="Model"><input className={inputCls} value={f.model} onChange={set("model")} /></L>
         <div className="block">
@@ -247,6 +275,7 @@ export default function AssetForm({ asset, lookups, list, nextTag, departments, 
             <input type="checkbox" checked={f.active} onChange={set("active")} /> Active (untick to hide from day-to-day lists)
           </label>
         )}
+        </>}
       </div>
       <div className="mt-5 flex flex-wrap items-center justify-between gap-2">
         {editing ? <HoldToConfirmButton label="Delete asset" onConfirm={remove} disabled={busy} /> : <span />}

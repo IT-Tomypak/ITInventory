@@ -14,9 +14,10 @@ import { Card } from "../components/ui";
 const REFUSALS = {
   rate_limited_name: () => `You have already sent 5 requests in the last hour. Please wait an hour before sending another, or call ${itContact()} if it cannot wait.`,
   rate_limited_overall: () => `The request form is very busy right now. Please try again in an hour, or call ${itContact()} if it is urgent.`,
-  missing_fields: () => "Please fill in your name, employee number, department and HOD, and tick at least one service.",
+  missing_fields: () => "Please fill in your staff ID, department and HOD, and tick at least one service.",
   invalid_asset_type: () => "Please choose the services from the list.",
   invalid_email: () => "Please check your email address.",
+  invalid_login: () => `Your staff ID or password is not correct. Your password is your staff ID. If it still fails, call ${itContact()}.`,
   invalid_hod: () => "Please choose your HOD from the list.",
   invalid_urgency: () => "Please choose Normal or Urgent.",
   justification_too_long: () => "Please shorten the explanation to 2000 characters or fewer.",
@@ -33,12 +34,12 @@ async function submitPublicRequest(fields, files) {
   const { data, error } = await supabase.rpc("submit_equipment_request", {
     p_name: fields.name, p_department: fields.department, p_asset_type: fields.services[0],
     p_justification: fields.justification, p_urgency: fields.urgency, p_attachment: urls.join("\n"),
-    p_employee_no: fields.employee_no, p_hod: fields.hod, p_services: fields.services, p_email: fields.email,
+    p_employee_no: fields.employee_no, p_hod: fields.hod, p_services: fields.services, p_email: fields.email, p_password: fields.password,
   });
   if (error) throw new Error(`The request could not be sent. Please try again, or call ${itContact()}.`);
   if (!data.ok) throw new Error((REFUSALS[data.reason] ?? (() => `The request was not accepted. Please call ${itContact()}.`))());
   return {
-    requestId: data.request_id, createdAt: data.created_at, name: fields.name, employeeNo: fields.employee_no,
+    requestId: data.request_id, createdAt: data.created_at, name: data.name, employeeNo: fields.employee_no,
     department: fields.department, hod: fields.hod,
     assetType: fields.services.join(", "), urgency: fields.urgency, photoCount: urls.length, justification: fields.justification,
   };
@@ -52,12 +53,12 @@ export default function PublicRequestPage() {
   useEffect(() => { supabase.rpc("hod_names").then(({ data }) => setHods(data || [])); }, []);
   return (
     <PublicPage title={receipt ? "Request sent" : "Request equipment"}
-      subtitle={receipt ? "IT has received your request." : "Ask the IT Department for hardware. No login needed."}>
+      subtitle={receipt ? "IT has received your request." : "Ask the IT Department for hardware. You need your staff ID and password."}>
       {receipt ? (
         <RequestReceipt receipt={receipt} onAnother={() => { setReceipt(null); setFormKey((k) => k + 1); }} />
       ) : (
         <Card className="p-4 sm:p-6">
-          <RequestForm key={formKey} hods={hods} onSubmit={submitPublicRequest} onDone={setReceipt} />
+          <RequestForm key={formKey} hods={hods} staffLogin onSubmit={submitPublicRequest} onDone={setReceipt} />
         </Card>
       )}
       {!receipt && (

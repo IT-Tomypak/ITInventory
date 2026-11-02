@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { Camera, Download, ImagePlus, Search, Send, X } from "lucide-react";
 import { ASSET_TYPES } from "../../lib/assets";
 import { buildReceiptPdf, receiptTime } from "../../lib/receipt-pdf";
+import { downloadPdf } from "../../lib/handover-pdf";
 import { COMPANY } from "../../lib/site";
 import { inputCls } from "./AssetForm";
 import { cn } from "./ui";
@@ -21,13 +22,14 @@ function L({ label, children, className }) {
 }
 
 /**
- * onSubmit({ name, email, employee_no, department, hod, services, urgency, justification }, files)
+ * onSubmit({ name, email, employee_no, password, department, hod, services, urgency, justification }, files)
  * hods: the names the HOD box offers (IT's list); the value must be one of them.
+ * staffLogin: the public form asks for a staff ID and password (checked by the RPC).
  * must resolve to a receipt object, or throw an Error whose message is shown
  * to the person as-is (so make it human).
  */
-export function RequestForm({ defaultName = "", defaultDepartment = "", hods = [], onSubmit, onDone }) {
-  const [f, setF] = useState({ name: defaultName, email: "", employee_no: "", department: defaultDepartment, hod: "", services: [], urgency: "Normal", justification: "" });
+export function RequestForm({ defaultName = "", defaultDepartment = "", hods = [], staffLogin = false, onSubmit, onDone }) {
+  const [f, setF] = useState({ name: defaultName, email: "", employee_no: "", password: "", department: defaultDepartment, hod: "", services: [], urgency: "Normal", justification: "" });
   const [files, setFiles] = useState([]); // { file, url }
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -53,7 +55,7 @@ export function RequestForm({ defaultName = "", defaultDepartment = "", hods = [
     setError("");
     try {
       const receipt = await onSubmit({
-        name: f.name.trim(), email: f.email.trim(), employee_no: f.employee_no.trim(), department: f.department.trim(), hod,
+        name: f.name.trim(), email: f.email.trim(), employee_no: f.employee_no.trim(), password: f.password, department: f.department.trim(), hod,
         services: f.services, urgency: f.urgency, justification: f.justification.trim(),
       }, files.map((x) => x.file));
       onDone(receipt);
@@ -67,12 +69,14 @@ export function RequestForm({ defaultName = "", defaultDepartment = "", hods = [
   return (
     <form onSubmit={submit} className="space-y-4">
       <div className="grid gap-4 sm:grid-cols-2">
-        <L label="Requester name *"><input className={inputCls} value={f.name} onChange={set("name")} required maxLength={100} autoComplete="name" /></L>
-        <L label="Employee no *"><input className={inputCls} value={f.employee_no} onChange={set("employee_no")} required maxLength={30} /></L>
-        <L label="Your email *">
-          <input type="email" className={inputCls} value={f.email} onChange={set("email")} required maxLength={200} autoComplete="email"
+        {/* Public form: the name comes from the staff list, matched on the staff ID. */}
+        {!staffLogin && <L label="Requester name *"><input className={inputCls} value={f.name} onChange={set("name")} required maxLength={100} autoComplete="name" /></L>}
+        <L label={staffLogin ? "Staff ID *" : "Employee no *"}><input className={inputCls} value={f.employee_no} onChange={set("employee_no")} required maxLength={30} autoComplete="username" /></L>
+        {staffLogin && <L label="Password *"><input type="password" className={inputCls} value={f.password} onChange={set("password")} required maxLength={100} autoComplete="current-password" /></L>}
+        <L label="Your email (optional)">
+          <input type="email" className={inputCls} value={f.email} onChange={set("email")} maxLength={200} autoComplete="email"
             placeholder="name@tomypak.com.my" />
-          <span className="mt-1 block text-xs text-muted">Updates on this request are sent here.</span>
+          <span className="mt-1 block text-xs text-muted">Get an email when your HOD or IT approves. You can also track it with the request number.</span>
         </L>
         <L label="Department *"><input className={inputCls} value={f.department} onChange={set("department")} required maxLength={100} /></L>
         <L label="HOD Department *">
@@ -151,14 +155,7 @@ export function RequestForm({ defaultName = "", defaultDepartment = "", hods = [
 // site to produce it. The same bytes are archived server-side (store-receipt).
 export function downloadReceipt(r) {
   const bytes = buildReceiptPdf({ ...r, statusUrl: `${window.location.origin}/status/?id=${r.requestId}`, company: COMPANY });
-  const a = Object.assign(document.createElement("a"), {
-    href: URL.createObjectURL(new Blob([bytes], { type: "application/pdf" })),
-    download: `ITrack-Request-${r.requestId}.pdf`,
-  });
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-  setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+  downloadPdf(bytes, `ITrack-Request-${r.requestId}.pdf`);
 }
 
 /** receipt = { requestId, createdAt, name, employeeNo, department, hod, assetType (every service asked for), urgency, photoCount, justification } */

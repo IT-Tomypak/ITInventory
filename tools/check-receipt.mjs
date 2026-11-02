@@ -19,7 +19,9 @@ const saved = await soloNotify();
 let id;
 try {
   const sub = await anonClient().rpc("submit_equipment_request", { p_name: "check-receipt probe", p_department: "IT",
-    p_asset_type: "Other", p_justification: "check-receipt.mjs probe, cancelled automatically", p_urgency: "Normal", p_attachment: null });
+    p_asset_type: "Other", p_justification: "check-receipt.mjs probe, cancelled automatically", p_urgency: "Normal", p_attachment: null,
+    // The form needs a real staff ID (its password is the ID): set PROBE_STAFF_ID.
+    p_employee_no: process.env.PROBE_STAFF_ID, p_password: process.env.PROBE_STAFF_ID });
   check(sub.data?.ok && sub.data.request_id > 0, `the public form returned a request number (#${sub.data?.request_id})`);
   id = sub.data?.request_id;
   if (!id) throw new Error(sub.error?.message ?? sub.data?.reason);

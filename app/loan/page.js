@@ -19,6 +19,8 @@ const REFUSALS = {
   missing_fields: () => "Please fill in every field.",
   invalid_dates: () => "The end date must be on or after the start date.",
   reason_too_long: () => "Please shorten the reason to 2000 characters or fewer.",
+  invalid_login: () => `Your staff ID or password is not correct. Your password is your staff ID. If it still fails, call ${itContact()}.`,
+  invalid_email: () => "Please check your email address.",
   item_unavailable: () => `That item has just run out. Choose another, or call ${itContact()}.`,
 };
 
@@ -31,7 +33,8 @@ function L({ label, children }) {
   );
 }
 
-const EMPTY = { name: "", employee_no: "", department: "", phone: "", item_type: "", reason: "", start_on: "", end_on: "" };
+// No name box: the server takes the name from the staff list by staff ID.
+const EMPTY = { name: "", employee_no: "", password: "", email: "", department: "", phone: "", item_type: "", reason: "", start_on: "", end_on: "" };
 
 export default function PublicLoanPage() {
   const [items, setItems] = useState(null); // [{ item_type, available }]
@@ -52,11 +55,12 @@ export default function PublicLoanPage() {
     const { data, error: err } = await supabase.rpc("submit_loan_request", {
       p_name: f.name.trim(), p_employee_no: f.employee_no.trim(), p_department: f.department.trim(), p_phone: f.phone.trim(),
       p_item_type: f.item_type, p_reason: f.reason.trim(), p_start_on: f.start_on, p_end_on: f.end_on,
+      p_password: f.password, p_email: f.email.trim(),
     });
     setBusy(false);
     if (err) return setError(`The request could not be sent. Please try again, or call ${itContact()}.`);
     if (!data.ok) return setError((REFUSALS[data.reason] ?? (() => `The request was not accepted. Please call ${itContact()}.`))());
-    setSent({ ...f, loan_id: data.loan_id });
+    setSent({ ...f, password: "", name: data.name, loan_id: data.loan_id });
     setF(EMPTY);
   }
 
@@ -67,7 +71,7 @@ export default function PublicLoanPage() {
           <p className="text-xs text-muted">Loan request number</p>
           <p className="text-4xl font-bold tracking-tight">L-{sent.loan_id}</p>
           <dl className="mt-4 space-y-2 text-sm">
-            {[["Loaner", sent.name], ["Employee no", sent.employee_no], ["Department", sent.department], ["Phone", sent.phone],
+            {[["Loaner", sent.name], ["Staff ID", sent.employee_no], ["Department", sent.department], ["Phone", sent.phone],
               ["Item", sent.item_type], ["From", fmtDate(sent.start_on)], ["To", fmtDate(sent.end_on)]].map(([k, v]) => (
               <div key={k} className="flex justify-between gap-4"><dt className="text-muted">{k}</dt><dd className="text-right font-semibold">{v}</dd></div>
             ))}
@@ -80,15 +84,16 @@ export default function PublicLoanPage() {
   }
 
   return (
-    <PublicPage title="Borrow an accessory" subtitle="Ask the IT Department to lend you an accessory. No login needed.">
+    <PublicPage title="Borrow an accessory" subtitle="Ask the IT Department to lend you an accessory. You need your staff ID and password.">
       <Card className="p-4 sm:p-6">
         {items === null ? <p className="text-sm text-muted">Loading…</p>
           : items.length === 0 ? <p className="text-sm">No accessories are available to borrow right now. Please contact {itContact()}.</p>
           : (
             <form onSubmit={submit} className="space-y-4">
               <div className="grid gap-4 sm:grid-cols-2">
-                <L label="Loaner name *"><input className={inputCls} value={f.name} onChange={set("name")} required maxLength={100} autoComplete="name" /></L>
-                <L label="Employee no *"><input className={inputCls} value={f.employee_no} onChange={set("employee_no")} required maxLength={30} /></L>
+                <L label="Staff ID *"><input className={inputCls} value={f.employee_no} onChange={set("employee_no")} required maxLength={30} autoComplete="username" /></L>
+                <L label="Password *"><input type="password" className={inputCls} value={f.password} onChange={set("password")} required maxLength={100} autoComplete="current-password" /></L>
+                <L label="Your email (optional)"><input type="email" className={inputCls} value={f.email} onChange={set("email")} maxLength={200} autoComplete="email" placeholder="name@tomypak.com.my" /></L>
                 <L label="Loaner department *"><input className={inputCls} value={f.department} onChange={set("department")} required maxLength={100} /></L>
                 <L label="Phone no *"><input type="tel" className={inputCls} value={f.phone} onChange={set("phone")} required maxLength={30} autoComplete="tel" /></L>
                 <L label="Loaned item *">
@@ -97,7 +102,6 @@ export default function PublicLoanPage() {
                     {items.map((i) => <option key={i.item_type} value={i.item_type}>{i.item_type} ({i.available} available)</option>)}
                   </select>
                 </L>
-                <span className="hidden sm:block" />
                 <L label="Start date (estimate) *">
                   <input type="date" className={inputCls} value={f.start_on} onChange={set("start_on")} required min={today()} />
                 </L>

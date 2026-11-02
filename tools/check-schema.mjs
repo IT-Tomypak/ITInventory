@@ -144,21 +144,26 @@ async function asAnon(sql, params) {
   await db.query("set role anon");
   try { return await db.query(sql, params); } finally { await db.query("reset role"); }
 }
-const submit = (name, extra = {}) => asAnon("select submit_equipment_request($1,$2,$3,$4,$5,$6) as r",
-  [name, extra.dept ?? "QA", extra.type ?? "Laptop", "need one", extra.urgency ?? "Normal", extra.photo ?? null]).then((x) => x.rows[0].r);
+// The public forms need a staff ID on the staff list, and its password (20261015000000).
+await db.query("reset role");
+await db.query("insert into staff(full_name, employee_no) values ('Siti','500001'),('Nina','123456'),('Lina','654321'),('Omar','111111')");
+const submit = (name, extra = {}) => asAnon("select submit_equipment_request($1,$2,$3,$4,$5,$6, p_employee_no => $7, p_password => $7) as r",
+  [name, extra.dept ?? "QA", extra.type ?? "Laptop", "need one", extra.urgency ?? "Normal", extra.photo ?? null, extra.emp ?? "500001"]).then((x) => x.rows[0].r);
 const photo = "https://abc.supabase.co/storage/v1/object/public/attachments/requests/1-x.jpg";
-r = await submit("Siti", { photo: photo + "\n" + photo });
-ok(r.ok && r.request_id > 0, "anon submits a request " + JSON.stringify(r));
+r = await submit("", { photo: photo + "\n" + photo });
+ok(r.ok && r.request_id > 0 && r.name === "Siti", "anon submits a request with no name; the staff ID gives it " + JSON.stringify(r));
 r = await as("admin", `select requested_by_name, created_by_name, status, attachment_path from equipment_request where request_id=${r.request_id}`);
-ok(r.rows[0].created_by_name === "Public form" && r.rows[0].status === "Requested" && r.rows[0].attachment_path.split("\n").length === 2, "public request stamped 'Public form' " + JSON.stringify(r.rows[0]));
+ok(r.rows[0].requested_by_name === "Siti" && r.rows[0].created_by_name === "Public form" && r.rows[0].status === "Requested" && r.rows[0].attachment_path.split("\n").length === 2, "public request stamped 'Public form', named from staff " + JSON.stringify(r.rows[0]));
+r = await submit("Siti", { emp: "999999" }); ok(!r.ok && r.reason === "invalid_login", "unknown staff ID refused as a login, not as a missing name");
 r = await submit("Siti", { type: "Toaster" }); ok(!r.ok && r.reason === "invalid_asset_type", "invalid type refused");
 r = await submit("Siti", { photo: "https://evil.example/x.jpg" }); ok(!r.ok && r.reason === "invalid_attachment", "foreign attachment URL refused");
 for (let i = 0; i < 4; i++) await submit("SITI ");
 r = await submit("siti"); ok(!r.ok && r.reason === "rate_limited_name", "6th request by same name in an hour refused (case/space-insensitive)");
 r = await as("admin", "select count(*) filter (where accepted)::int a, count(*) filter (where not accepted)::int n, min(ip) ip from request_submission_log");
-ok(r.rows[0].a === 5 && r.rows[0].n === 3 && r.rows[0].ip === "203.0.113.9", "every attempt logged incl. refusals, first forwarded IP " + JSON.stringify(r.rows[0]));
-for (let i = 0; i < 35; i++) await submit("Person " + i);
-r = await submit("Somebody new"); ok(!r.ok && r.reason === "rate_limited_overall", "41st request in an hour refused overall");
+ok(r.rows[0].a === 5 && r.rows[0].n === 4 && r.rows[0].ip === "203.0.113.9", "every attempt logged incl. refusals, first forwarded IP " + JSON.stringify(r.rows[0]));
+await db.query("insert into staff(full_name, employee_no) select 'Person ' || i, 'P' || i from generate_series(0, 34) i");
+for (let i = 0; i < 35; i++) await submit("", { emp: "P" + i });
+r = await submit("", { emp: "111111" }); ok(!r.ok && r.reason === "rate_limited_overall", "41st request in an hour refused overall");
 r = await asAnon("select * from check_request_status(1)");
 ok(r.rows.length === 1 && !("requested_by_name" in r.rows[0]) && !("approval_note" in r.rows[0]) && r.rows[0].allocated === true, "anon status lookup returns bland fields only " + Object.keys(r.rows[0]));
 await refused(() => asAnon("select * from equipment_request"), "anon reads equipment_request");
@@ -168,21 +173,35 @@ r = await as("officer", "select count(*)::int n from request_submission_log"); o
 
 // New request fields and the loan accessories request (20261012040000).
 await db.query("reset role"); await db.query("delete from request_submission_log");
-const submit9 = (emp, hod, services) => asAnon("select submit_equipment_request($1,$2,$3,$4,$5,$6,$7,$8,$9) as r",
-  ["Nina", "QA", null, "two things", "Normal", null, emp, hod, services]).then((x) => x.rows[0].r);
-r = await submit9("123456", "Mr HOD", ["Monitor", "Laptop"]); ok(r.ok, "request with employee no, HOD and two services " + JSON.stringify(r));
+const submit9 = (emp, hod, services, pw = emp, email = null) => asAnon("select submit_equipment_request($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) as r",
+  ["Nina", "QA", null, "two things", "Normal", null, emp, hod, services, email, pw]).then((x) => x.rows[0].r);
+r = await submit9("123456", "Mr HOD", ["Laptop"]); ok(!r.ok && r.reason === "invalid_hod", "HOD not on the list refused, even without an email");
+r = await submit9("123456", "Tan See Yin", ["Laptop"], "wrong"); ok(!r.ok && r.reason === "invalid_login", "wrong password refused");
+r = await submit9("999999", "Tan See Yin", ["Laptop"]); ok(!r.ok && r.reason === "invalid_login", "staff ID not on the staff list refused");
+r = await submit9(" 123456 ", "Tan See Yin", ["Laptop"], "123456", ""); ok(r.ok, "staff ID + password accepted, blank email is fine " + JSON.stringify(r));
+r = await as("admin", `select requester_email from equipment_request where request_id=${r.request_id}`); ok(r.rows[0].requester_email === null, "blank email stored as NULL");
+r = (await asAnon("select submit_equipment_request('x','QA','Laptop',null,'Normal',null,'123456','Tan See Yin',array['Laptop'],null) as r")).rows[0].r;
+ok(!r.ok && r.reason === "invalid_login", "a call without the password is refused");
+await db.query("reset role"); await db.query("delete from request_submission_log");
+r = await submit9("123456", "Tan See Yin", ["Monitor", "Laptop"]); ok(r.ok, "request with employee no, HOD and two services " + JSON.stringify(r));
 r = await as("admin", `select asset_type, services, employee_no, hod from equipment_request where request_id=${r.request_id}`);
-ok(r.rows[0].asset_type === "Monitor" && r.rows[0].services === "Monitor, Laptop" && r.rows[0].employee_no === "123456" && r.rows[0].hod === "Mr HOD", "first service is the asset type, all are kept " + JSON.stringify(r.rows[0]));
-r = await submit9("", "Mr HOD", ["Laptop"]); ok(!r.ok && r.reason === "missing_fields", "request without employee no refused");
-r = await submit9("123456", "Mr HOD", []); ok(!r.ok && r.reason === "missing_fields", "request with no service ticked refused");
-r = await submit9("123456", "Mr HOD", ["Laptop", "Toaster"]); ok(!r.ok && r.reason === "invalid_asset_type", "unknown service refused");
+ok(r.rows[0].asset_type === "Monitor" && r.rows[0].services === "Monitor, Laptop" && r.rows[0].employee_no === "123456" && r.rows[0].hod === "Tan See Yin", "first service is the asset type, all are kept " + JSON.stringify(r.rows[0]));
+r = await submit9("", "Tan See Yin", ["Laptop"]); ok(!r.ok && r.reason === "missing_fields", "request without employee no refused");
+r = await submit9("123456", "Tan See Yin", []); ok(!r.ok && r.reason === "missing_fields", "request with no service ticked refused");
+r = await submit9("123456", "Tan See Yin", ["Laptop", "Toaster"]); ok(!r.ok && r.reason === "invalid_asset_type", "unknown service refused");
 await as("officer", "insert into assets(asset_tag, asset_type) values ('ACC-LOAN1','Mouse')");
 r = await asAnon("select * from loanable_accessories()");
 ok(r.rows.length === 1 && r.rows[0].item_type === "Mouse" && r.rows[0].available === 1 && Object.keys(r.rows[0]).length === 2, "anon sees loanable types and counts only " + JSON.stringify(r.rows));
-const loan = (o = {}) => asAnon("select submit_loan_request($1,$2,$3,$4,$5,$6,$7,$8) as r",
-  ["Lina", o.emp ?? "654321", "Sales", "012-3456789", o.item ?? "Mouse", "mine broke", o.start ?? "2026-10-13", o.end ?? "2026-10-20"]).then((x) => x.rows[0].r);
-r = await loan(); ok(r.ok && r.loan_id > 0, "anon submits a loan request " + JSON.stringify(r));
-r = await loan({ emp: " " }); ok(!r.ok && r.reason === "missing_fields", "loan request without employee no refused");
+const loan = (o = {}) => asAnon("select submit_loan_request($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) as r",
+  ["Lina", o.emp ?? "654321", "Sales", "012-3456789", o.item ?? "Mouse", "mine broke", o.start ?? "2026-10-13", o.end ?? "2026-10-20",
+   o.pw ?? o.emp ?? "654321", o.email ?? null]).then((x) => x.rows[0].r);
+r = await loan({ email: " Lina@Example.com " }); ok(r.ok && r.loan_id > 0 && r.name === "Lina", "anon submits a loan request, named from staff " + JSON.stringify(r));
+r = await as("admin", `select requester_email from loan_request where loan_id=${r.loan_id}`); ok(r.rows[0].requester_email === "lina@example.com", "loan email kept");
+r = await loan({ pw: "nope" }); ok(!r.ok && r.reason === "invalid_login", "loan with wrong password refused");
+r = await loan({ email: "bad" }); ok(!r.ok && r.reason === "invalid_email", "loan with bad email refused");
+r = (await asAnon("select submit_loan_request('x','654321','d','p','Mouse','r','2026-10-13','2026-10-14') as r")).rows[0].r;
+ok(!r.ok && r.reason === "invalid_login", "a loan call without the password is refused");
+r = await loan({ emp: " ", pw: " " }); ok(!r.ok && r.reason === "missing_fields", "loan request without employee no refused");
 r = await loan({ end: "2026-10-12" }); ok(!r.ok && r.reason === "invalid_dates", "loan ending before it starts refused");
 r = await loan({ item: "Keyboard" }); ok(!r.ok && r.reason === "item_unavailable", "loan of a type with no stock refused");
 await refused(() => asAnon("select * from loan_request"), "anon reads loan_request");
@@ -192,8 +211,8 @@ r = await as("officer", "update loan_request set status='Approved' returning sta
 
 // Requester email and the HOD list (20261012050000).
 await db.query("reset role"); await db.query("delete from request_submission_log");
-const submit10 = (hod, email) => asAnon("select submit_equipment_request($1,$2,$3,$4,$5,$6,$7,$8,$9,$10) as r",
-  ["Omar", "QA", null, null, "Normal", null, "111111", hod, ["Laptop"], email]).then((x) => x.rows[0].r);
+const submit10 = (hod, email) => asAnon("select submit_equipment_request($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11) as r",
+  ["Omar", "QA", null, null, "Normal", null, "111111", hod, ["Laptop"], email, "111111"]).then((x) => x.rows[0].r);
 r = await asAnon("select * from hod_names()");
 ok(r.rows.length === 20 && Object.keys(r.rows[0]).length === 1 && !JSON.stringify(r.rows).includes("@"), "anon gets the 20 HOD names and no email");
 await refused(() => asAnon("select * from hod"), "anon reads the hod table");

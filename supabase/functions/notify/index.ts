@@ -7,6 +7,8 @@
 // nothing. The x-webhook-secret header is the ENTIRE perimeter.
 //
 // POST { kind, ... }:
+//   new_request  { request_id }           -> notify_recipients purpose equipment_request (on submit)
+//   new_loan     { loan_id }              -> notify_recipients purpose equipment_request (on submit)
 //   hod_request  { request_id }           -> the request's hod_email, with Approve / Reject links
 //   it_review    { request_id }           -> notify_recipients purpose equipment_request (after the HOD approves)
 //   hod_rejected { request_id }           -> the request's requester_email
@@ -147,8 +149,7 @@ const requestRows = (r: Any) =>
 // ---------------------------------------------------------------- kinds ----
 // Photos by URL (the bucket is public-read), not attached: the mail stays small.
 const photoSection = (r: Any) => {
-  const photos = String(r.attachment_path ?? "").split(/[
-,]/).map((s) => s.trim()).filter(Boolean).slice(0, 4);
+  const photos = String(r.attachment_path ?? "").split(/[\n,]/).map((s) => s.trim()).filter(Boolean).slice(0, 4);
   return photos.length ? section("Photos", photos.map((u) =>
     `<a href="${esc(u)}"><img src="${esc(u)}" width="150" alt="Request photo" style="width:150px;height:auto;border:1px solid #dde4ed;border-radius:8px;margin:0 6px 6px 0;"></a>`).join("")) : "";
 };
@@ -191,6 +192,33 @@ async function itReview(cfg: Cfg, appUrl: string, id: number) {
   const html = shell(`Request #${id} is ready for IT review`, `${r.requested_by_name} (${r.department}) is asking for: ${what(r)}.`,
     rows, extra, r.urgency === "Urgent" ? "#a3341f" : "#16488c");
   return send(cfg, "equipment_request", to, subject, html, String(id));
+}
+
+// Heads-up to IT the moment a request is sent, before the HOD decides. IT acts
+// on it_review; this one is for awareness only.
+async function newRequest(cfg: Cfg, appUrl: string, id: number) {
+  const r = await getRequest(id);
+  if (!r) return json({ ok: false, reason: "request not found" });
+  const to = await recipients("equipment_request");
+  if (!to.length) return json({ ok: false, reason: "no active recipients" });
+  const extra = photoSection(r) + (appUrl ? `<div style="margin-top:22px;">${button(`${appUrl}/entry/`, "Open in ITrack")}</div>` : "");
+  const subject = `New equipment request #${id} from ${r.requested_by_name}${r.urgency === "Urgent" ? " (URGENT)" : ""}`;
+  const html = shell(`New request #${id}`, `${r.requested_by_name} (${r.department}) is asking for: ${what(r)}. Waiting for HOD ${r.hod ?? ""} to approve.`,
+    requestRows(r), extra, r.urgency === "Urgent" ? "#a3341f" : "#16488c");
+  return send(cfg, "equipment_request", to, subject, html, String(id));
+}
+
+async function newLoan(cfg: Cfg, appUrl: string, id: number) {
+  const { data: l } = await supabase.from("loan_request").select("*").eq("loan_id", id).maybeSingle();
+  if (!l) return json({ ok: false, reason: "loan not found" });
+  const to = await recipients("equipment_request");
+  if (!to.length) return json({ ok: false, reason: "no active recipients" });
+  const rows = row("Loan", `#${id}`) + row("Borrower", l.loaner_name) + row("Employee no", l.employee_no) +
+    row("Department", l.department) + row("Phone", l.phone) + row("Email", l.requester_email) + row("Item", l.item_type) +
+    row("From", fmtDate(l.start_on)) + row("Until", fmtDate(l.end_on)) + row("Sent", fmtDateTime(l.created_at)) + row("Reason", l.reason);
+  const extra = appUrl ? `<div style="margin-top:22px;">${button(`${appUrl}/entry/?view=loans`, "Open in ITrack")}</div>` : "";
+  return send(cfg, "equipment_request", to, `New loan request #${id}: ${l.item_type} for ${l.loaner_name}`,
+    shell(`New loan request #${id}`, `${l.loaner_name} (${l.department}) wants to borrow a ${l.item_type}.`, rows, extra), `L${id}`);
 }
 
 async function hodRejected(cfg: Cfg, appUrl: string, id: number) {
@@ -287,6 +315,8 @@ Deno.serve(async (req) => {
   const appUrl = String(cfg.notify_app_url ?? "").replace(/\/+$/, "");
   try {
     switch (body.kind) {
+      case "new_request": return await newRequest(cfg, appUrl, Number(body.request_id));     // IT heads-up on submit
+      case "new_loan": return await newLoan(cfg, appUrl, Number(body.loan_id));              // IT: a loan was asked for
       case "hod_request": return await hodRequest(cfg, appUrl, Number(body.request_id));   // Stage 1: HOD approves / rejects from the mail
       case "it_review": return await itReview(cfg, appUrl, Number(body.request_id));       // Stage 2: IT, after the HOD approves
       case "hod_rejected": return await hodRejected(cfg, appUrl, Number(body.request_id)); // HOD rejected: tell the requester

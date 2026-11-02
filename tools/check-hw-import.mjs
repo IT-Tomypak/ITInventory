@@ -10,7 +10,7 @@
 import zlib from "node:zlib";
 import { buildXlsx, zipStore } from "../lib/xlsx.js";
 import { readXlsx } from "../lib/xlsxRead.js";
-import { parseAssetQr, parseDate, parseQr, planImport } from "../lib/hardwareImport.js";
+import { parseAssetQr, parseDate, parseSerialQr, parseQr, planImport } from "../lib/hardwareImport.js";
 import { parseTag, getSeriesStats, getNextTagForSeries } from "../lib/hardware.js";
 
 let fails = 0;
@@ -21,6 +21,12 @@ check(parseQr("  5CD1234XYZ ").serial_no === "5CD1234XYZ", "plain QR text is the
 check(JSON.stringify(parseQr("S/N: ABC123\nModel: Latitude 5440\nBrand: Dell")) === JSON.stringify({ serial_no: "ABC123", model: "Latitude 5440", make: "Dell" }), "Key: value lines map to fields");
 check(parseQr("{\"Serial_number\":\"X9\",\"Mac_address\":\"aabbccddeeff\"}").mac_address === "AA-BB-CC-DD-EE-FF", "JSON uses sheet headers, MAC normalised");
 check(parseQr("https://qrl.dell.com/ABC").serial_no === "https://qrl.dell.com/ABC", "a URL (colon, no key) is kept whole");
+for (const [txt, want] of [
+  ["S/N: ABC123", "ABC123"], ["S/N ABC123", "ABC123"], ["Serial Number: 5CD1234XYZ", "5CD1234XYZ"],
+  ["Serial No. X9-77", "X9-77"], ["Model: Latitude 5440\nSN: HX12\nMAC: aa", "HX12"],
+  ["Dell Latitude 5440 S/N:7GH2K93 Made in China", "7GH2K93"], ["  5CD1234XYZ ", "5CD1234XYZ"],
+  ["SNOW-01", "SNOW-01"], ["https://qrl.dell.com/ABC", "https://qrl.dell.com/ABC"],
+]) check(parseSerialQr(txt).serial_no === want, `serial scan: ${JSON.stringify(txt)} -> ${want}`);
 {
   const want = JSON.stringify({ asset_tag: "CE-23-A0100374", make: "VIEWSONIC", model: "VA2432-H 23.8\" WIDE/LCD/FHD MONITOR" });
   check(JSON.stringify(parseAssetQr("CE-23-A0100374 VIEWSONIC VA2432-H 23.8\" WIDE/LCD/FHD MONITOR")) === want, "fixed-asset QR on one line");
@@ -45,7 +51,7 @@ const sheetRows = [
   ["TPLL", "TPLL001", "Active", "laptop", "Ali", "1001", 45994, "70:d8:23:70:d7:a8", "abcde - fghij-klmno-pqrst-uvwxy", "1 346 002 150", "S1", "CHN", "a <&> b"],
   ["", "", "", "", "", "", "", "", "", "", "", "", ""],
   ["TPLL", "TPLL002", "Vacant", "Laptop", "", "", "", "", "", "", "S2", "", ""],
-  ["TPLL", "TPLL009", "Registered", "Laptop", "", "", "10/5/2023", "", "", "", "S9", "New Supplier", ""],
+  ["TPLL", "TPLL009", "Vacant", "Laptop", "", "", "10/5/2023", "", "", "", "S9", "New Supplier", ""],
   ["TPDL", "TPDL001", "Retired", "Desktop", "", "", "", "", "", "12345", "S1", "", ""],
   ["ACC", "ACC-001", "Active", "Laptop", "", "", "", "", "", "", "", "", ""],
   ["TPLL", "TPLL003", "Vacant", "Laptop", "Bea", "", "", "", "", "", "", "", ""],

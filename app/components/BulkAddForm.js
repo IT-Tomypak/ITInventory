@@ -8,6 +8,7 @@ import { supabase } from "../../lib/supabaseClient";
 import { inputCls } from "./AssetForm";
 import { toast } from "./ui";
 import QrScan from "./QrScan";
+import { parseSerialQr } from "../../lib/hardwareImport";
 
 const MAX = 200;
 const nz = (v) => v.trim() || null;
@@ -75,7 +76,7 @@ export default function BulkAddForm({ lookups, list, nextTag, departments, onSav
             <textarea rows={4} className={inputCls} value={f.serials} onChange={set("serials")} />
           </label>
           <div className="mt-1.5">
-            <QrScan label="Scan serial" parse={(t) => ({ serial_no: String(t).trim() })}
+            <QrScan label="Scan serial" parse={parseSerialQr}
               onScan={(v) => setF((s) => ({ ...s, serials: (s.serials.trimEnd() ? s.serials.trimEnd() + "\n" : "") + v.serial_no }))} />
           </div>
         </div>
