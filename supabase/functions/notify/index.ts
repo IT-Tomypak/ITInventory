@@ -7,7 +7,11 @@
 // nothing. The x-webhook-secret header is the ENTIRE perimeter.
 //
 // POST { kind, ... }:
-//   new_request { request_id }            -> notify_recipients purpose equipment_request
+//   new_request  { request_id }           -> notify_recipients purpose equipment_request (on submit)
+//   new_loan     { loan_id }              -> notify_recipients purpose equipment_request (on submit)
+//   hod_request  { request_id }           -> the request's hod_email, with Approve / Reject links
+//   it_review    { request_id }           -> notify_recipients purpose equipment_request (after the HOD approves)
+//   hod_rejected { request_id }           -> the request's requester_email
 //   release     { request_id, mode }      -> release_pending (mode pending) | release_decided
 //   handover    { assignment_id, issued_by_name } -> the holder's own email
 //   receipt     { request_id }            -> PDF filed in the private receipts bucket
@@ -25,6 +29,11 @@ const COMPANY = "Tomypak Flexible Packaging Sdn Bhd"; // same as lib/site.js
 // Sent on every message so an Exchange mail-flow rule can recognise ITrack
 // mail. Do NOT change it without updating any such rule in the same breath.
 const NOTIFY_HEADER = "8e48692da63ee9d16e6c32e0";
+// Microsoft 365's "Phishing domain" transport rule quarantines mail claiming to
+// be from tomypak.com.my. Its one exception is this header, set up for MTrack
+// (see C:\MTrack\tomypak-app\EMAIL_PIPELINE.md), so ITrack carries it too.
+// Remove it only after that rule has an exception for X-ITrack-Notify.
+const MTRACK_HEADER = "mtrack-9f3a71c4e28b";
 const KL = "Asia/Kuala_Lumpur";
 
 const supabase = createClient(Deno.env.get("SUPABASE_URL")!, Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!, {
@@ -50,7 +59,7 @@ async function resendSend(cfg: Cfg, to: string[], subject: string, html: string,
       headers: { Authorization: `Bearer ${cfg.notify_resend_api_key}`, "Content-Type": "application/json" },
       body: JSON.stringify({
         from: cfg.notify_from, to, subject, html,
-        headers: { "X-ITrack-Notify": NOTIFY_HEADER, "X-Entity-Ref-ID": refId }, // thread-collapse hint
+        headers: { "X-ITrack-Notify": NOTIFY_HEADER, "X-Mtrack-Notify": MTRACK_HEADER, "X-Entity-Ref-ID": refId }, // last one: thread-collapse hint
       }),
     });
     const text = await res.text();
@@ -104,15 +113,6 @@ const row = (label: string, value: unknown) => value == null || value === "" ? "
 const button = (href: string, label: string, accent = "#16488c") =>
   `<a href="${esc(href)}" style="display:inline-block;padding:10px 18px;background:${accent};color:#ffffff;border-radius:8px;text-decoration:none;font-size:14px;font-weight:600;">${esc(label)}</a>`;
 
-// One choice per table ROW: the name may wrap freely; the button sits in its
-// own fixed-width nowrap column so no name length or client width can squeeze it.
-const choiceRows = (items: { name: string; href: string; label: string }[]) =>
-  `<table role="presentation" width="100%" cellpadding="0" cellspacing="0">${items.map((i) =>
-    `<tr><td style="padding:8px 8px 8px 0;border-top:1px solid #eef1f5;font-size:14px;color:#1d1d1f;">${esc(i.name)}</td>` +
-    `<td width="96" style="padding:8px 0;border-top:1px solid #eef1f5;white-space:nowrap;text-align:right;">` +
-    `<a href="${esc(i.href)}" style="display:inline-block;width:84px;padding:7px 0;text-align:center;background:#16488c;color:#ffffff;border-radius:8px;text-decoration:none;font-size:13px;font-weight:600;">${esc(i.label)}</a></td></tr>`,
-  ).join("")}</table>`;
-
 const section = (title: string, inner: string) =>
   `<div style="margin-top:22px;"><div style="font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:#898781;margin-bottom:6px;">${esc(title)}</div>${inner}</div>`;
 
@@ -147,61 +147,95 @@ const requestRows = (r: Any) =>
   row("Description", r.justification);
 
 // ---------------------------------------------------------------- kinds ----
-async function newRequest(cfg: Cfg, appUrl: string, id: number) {
-  const { data: r } = await supabase.from("equipment_request").select("*").eq("request_id", id).maybeSingle();
+// Photos by URL (the bucket is public-read), not attached: the mail stays small.
+const photoSection = (r: Any) => {
+  const photos = String(r.attachment_path ?? "").split(/[\n,]/).map((s) => s.trim()).filter(Boolean).slice(0, 4);
+  return photos.length ? section("Photos", photos.map((u) =>
+    `<a href="${esc(u)}"><img src="${esc(u)}" width="150" alt="Request photo" style="width:150px;height:auto;border:1px solid #dde4ed;border-radius:8px;margin:0 6px 6px 0;"></a>`).join("")) : "";
+};
+const getRequest = async (id: number) =>
+  (await supabase.from("equipment_request").select("*").eq("request_id", id).maybeSingle()).data;
+const what = (r: Any) => r.services ?? r.asset_type;
+
+// Stage 1: the requester's HOD decides from the mail. Each button is a one-use
+// token that opens /assign, which previews first (Safe Links) and writes on the press.
+async function hodRequest(cfg: Cfg, appUrl: string, id: number) {
+  const r = await getRequest(id);
+  if (!r) return json({ ok: false, reason: "request not found" });
+  if (!r.hod_email) return json({ ok: false, reason: "no HOD email" });
+  // Without the buttons this mail is useless, so a failure here is a failed send.
+  if (!appUrl) return json({ ok: false, reason: "notify_app_url is not set" });
+  const mint = async (action: string) => {
+    const { data, error } = await supabase.rpc("create_assignment_link", { p_request_id: id, p_action: action });
+    if (error) throw error;
+    return `${appUrl}/assign/?t=${encodeURIComponent(data)}`;
+  };
+  const extra = photoSection(r) +
+    `<div style="margin-top:22px;font-size:14px;color:#1d1d1f;">Please approve or reject this request. You will be asked for your ID number.</div>` +
+    `<div style="margin-top:12px;">${button(await mint("hod_approve"), "Approve", "#0f7a3d")}&nbsp;&nbsp;${button(await mint("hod_reject"), "Reject", "#a3341f")}</div>`;
+  const subject = `Equipment request #${id} from ${r.requested_by_name} needs your approval${r.urgency === "Urgent" ? " (URGENT)" : ""}`;
+  const html = shell(`Request #${id} needs your approval`, `${r.requested_by_name} (${r.department}) is asking for: ${what(r)}.`,
+    requestRows(r), extra, r.urgency === "Urgent" ? "#a3341f" : "#16488c");
+  return send(cfg, "hod_request", [r.hod_email], subject, html, String(id));
+}
+
+// Stage 2: the HOD approved, so the request reaches IT. IT decides in the app.
+async function itReview(cfg: Cfg, appUrl: string, id: number) {
+  const r = await getRequest(id);
   if (!r) return json({ ok: false, reason: "request not found" });
   const to = await recipients("equipment_request");
   // Zero recipients is NOT an error: a misconfigured list must not log a scary failure.
   if (!to.length) return json({ ok: false, reason: "no active recipients" });
-
-  // Photos by URL (the bucket is public-read), not attached: the mail stays small.
-  const photos = String(r.attachment_path ?? "").split(/[\n,]/).map((s) => s.trim()).filter(Boolean).slice(0, 4);
-  let extra = photos.length ? section("Photos", photos.map((u) =>
-    `<a href="${esc(u)}"><img src="${esc(u)}" width="150" alt="Request photo" style="width:150px;height:auto;border:1px solid #dde4ed;border-radius:8px;margin:0 6px 6px 0;"></a>`).join("")) : "";
-
-  // The action block. A failure here degrades to a mail with no buttons, never no mail.
-  try {
-    if (!appUrl) throw new Error("notify_app_url is not set");
-    const link = (token: string, choice: number) => `${appUrl}/assign/?t=${encodeURIComponent(token)}&c=${choice}`;
-    if (["Requested", "Approved"].includes(r.status)) {
-      const { data: holder } = await supabase.rpc("request_holder", { p_request_id: id });
-      const { data: stock } = await supabase.from("assets").select("asset_id, asset_tag, make, model")
-        .eq("status", "In stock").eq("active", true).eq("asset_type", r.asset_type)
-        .order("purchase_date", { ascending: false, nullsFirst: false }).order("asset_id", { ascending: false }).limit(6);
-      if (holder && stock?.length) {
-        const { data: token, error } = await supabase.rpc("create_assignment_link", { p_request_id: id, p_action: "allocate" });
-        if (error) throw error;
-        extra += section("Allocate from stock", choiceRows(stock.map((a: Any) =>
-          ({ name: [a.asset_tag, [a.make, a.model].filter(Boolean).join(" ")].filter(Boolean).join(" — "), href: link(token, a.asset_id), label: "Allocate" }))));
-      } else if (stock?.length) {
-        extra += section("Allocate from stock", `<div style="font-size:13px;color:#55565b;">"${esc(r.requested_by_name)}" does not match exactly one staff record, so allocate this one in ITrack.</div>`);
-      }
-    }
-    if (!r.handled_by) {
-      const { data: officers } = await supabase.rpc("eligible_handlers");
-      if (officers?.length) {
-        const { data: token, error } = await supabase.rpc("create_assignment_link", { p_request_id: id, p_action: "assign_officer" });
-        if (error) throw error;
-        extra += section("Assign to an officer", choiceRows(officers.map((s: Any) =>
-          ({ name: s.full_name, href: link(token, s.staff_id), label: "Assign" }))));
-      }
-    }
-    extra += `<div style="margin-top:22px;">${button(`${appUrl}/entry/`, "Open in ITrack")}</div>`;
-  } catch (e) {
-    console.error("action block skipped:", e);
-  }
-
-  const subject = `New equipment request #${id}: ${r.asset_type}${r.urgency === "Urgent" ? " (URGENT)" : ""} for ${r.requested_by_name}`;
-  const html = shell(`New request #${id}`, `${r.requested_by_name} (${r.department}) needs a ${r.asset_type}.`, requestRows(r), extra,
-    r.urgency === "Urgent" ? "#a3341f" : "#16488c");
+  const rows = requestRows(r) + row("HOD approved by", r.hod_approved_by_name) + row("HOD approved", r.hod_approved_at && fmtDateTime(r.hod_approved_at));
+  const extra = photoSection(r) + (appUrl ? `<div style="margin-top:22px;">${button(`${appUrl}/entry/?view=approvals`, "Review in ITrack")}</div>` : "");
+  const subject = `Equipment request #${id}: HOD approved, waiting for IT${r.urgency === "Urgent" ? " (URGENT)" : ""}`;
+  const html = shell(`Request #${id} is ready for IT review`, `${r.requested_by_name} (${r.department}) is asking for: ${what(r)}.`,
+    rows, extra, r.urgency === "Urgent" ? "#a3341f" : "#16488c");
   return send(cfg, "equipment_request", to, subject, html, String(id));
+}
+
+// Heads-up to IT the moment a request is sent, before the HOD decides. IT acts
+// on it_review; this one is for awareness only.
+async function newRequest(cfg: Cfg, appUrl: string, id: number) {
+  const r = await getRequest(id);
+  if (!r) return json({ ok: false, reason: "request not found" });
+  const to = await recipients("equipment_request");
+  if (!to.length) return json({ ok: false, reason: "no active recipients" });
+  const extra = photoSection(r) + (appUrl ? `<div style="margin-top:22px;">${button(`${appUrl}/entry/`, "Open in ITrack")}</div>` : "");
+  const subject = `New equipment request #${id} from ${r.requested_by_name}${r.urgency === "Urgent" ? " (URGENT)" : ""}`;
+  const html = shell(`New request #${id}`, `${r.requested_by_name} (${r.department}) is asking for: ${what(r)}. Waiting for HOD ${r.hod ?? ""} to approve.`,
+    requestRows(r), extra, r.urgency === "Urgent" ? "#a3341f" : "#16488c");
+  return send(cfg, "equipment_request", to, subject, html, String(id));
+}
+
+async function newLoan(cfg: Cfg, appUrl: string, id: number) {
+  const { data: l } = await supabase.from("loan_request").select("*").eq("loan_id", id).maybeSingle();
+  if (!l) return json({ ok: false, reason: "loan not found" });
+  const to = await recipients("equipment_request");
+  if (!to.length) return json({ ok: false, reason: "no active recipients" });
+  const rows = row("Loan", `#${id}`) + row("Borrower", l.loaner_name) + row("Employee no", l.employee_no) +
+    row("Department", l.department) + row("Phone", l.phone) + row("Email", l.requester_email) + row("Item", l.item_type) +
+    row("From", fmtDate(l.start_on)) + row("Until", fmtDate(l.end_on)) + row("Sent", fmtDateTime(l.created_at)) + row("Reason", l.reason);
+  const extra = appUrl ? `<div style="margin-top:22px;">${button(`${appUrl}/entry/?view=loans`, "Open in ITrack")}</div>` : "";
+  return send(cfg, "equipment_request", to, `New loan request #${id}: ${l.item_type} for ${l.loaner_name}`,
+    shell(`New loan request #${id}`, `${l.loaner_name} (${l.department}) wants to borrow a ${l.item_type}.`, rows, extra), `L${id}`);
+}
+
+async function hodRejected(cfg: Cfg, appUrl: string, id: number) {
+  const r = await getRequest(id);
+  if (!r) return json({ ok: false, reason: "request not found" });
+  if (!r.requester_email) return json({ ok: false, reason: "no requester email" });
+  const rows = requestRows(r) + row("Rejected by", r.hod_approved_by_name) + row("Rejected", r.hod_approved_at && fmtDateTime(r.hod_approved_at)) + row("Remarks", r.hod_approval_note);
+  const extra = appUrl ? `<div style="margin-top:22px;">${button(`${appUrl}/status/?id=${id}`, "Track this request", "#a3341f")}</div>` : "";
+  return send(cfg, "hod_rejected", [r.requester_email], `Your equipment request #${id} was not approved by your HOD`,
+    shell("Request not approved", `Hello ${r.requested_by_name}, your HOD did not approve this request.`, rows, extra, "#a3341f"), String(id));
 }
 
 // The decision is made in the app, never in the mail: one place an approval
 // can happen, and approved_by is a signed-in identity. Only the accent differs
 // between the three modes, so they cannot drift apart.
 const RELEASE = {
-  pending:  { accent: "#1d1d1f", headline: "Asset release waiting for your decision", subj: "release awaiting your approval" },
+  pending: { accent: "#1d1d1f", headline: "Asset release waiting for your decision", subj: "release awaiting your approval" },
   approved: { accent: "#0f7a3d", headline: "Asset release approved", subj: "release approved" },
   rejected: { accent: "#a3341f", headline: "Asset release rejected", subj: "release rejected" },
 } as const;
@@ -281,11 +315,15 @@ Deno.serve(async (req) => {
   const appUrl = String(cfg.notify_app_url ?? "").replace(/\/+$/, "");
   try {
     switch (body.kind) {
-      case "new_request": return await newRequest(cfg, appUrl, Number(body.request_id));
-      case "release":     return await release(cfg, appUrl, Number(body.request_id), body.mode);
-      case "handover":    return await handover(cfg, appUrl, Number(body.assignment_id), String(body.issued_by_name ?? ""));
-      case "receipt":     return await receipt(appUrl, Number(body.request_id));
-      default:            return json({ ok: false, reason: `unknown kind ${body.kind}` });
+      case "new_request": return await newRequest(cfg, appUrl, Number(body.request_id));     // IT heads-up on submit
+      case "new_loan": return await newLoan(cfg, appUrl, Number(body.loan_id));              // IT: a loan was asked for
+      case "hod_request": return await hodRequest(cfg, appUrl, Number(body.request_id));   // Stage 1: HOD approves / rejects from the mail
+      case "it_review": return await itReview(cfg, appUrl, Number(body.request_id));       // Stage 2: IT, after the HOD approves
+      case "hod_rejected": return await hodRejected(cfg, appUrl, Number(body.request_id)); // HOD rejected: tell the requester
+      case "release": return await release(cfg, appUrl, Number(body.request_id), body.mode);
+      case "handover": return await handover(cfg, appUrl, Number(body.assignment_id), String(body.issued_by_name ?? ""));
+      case "receipt": return await receipt(appUrl, Number(body.request_id));
+      default: return json({ ok: false, reason: `unknown kind ${body.kind}` });
     }
   } catch (e) {
     console.error(e);

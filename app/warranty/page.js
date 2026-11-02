@@ -60,7 +60,7 @@ export default function WarrantyPage() {
   return (
     <>
       <PageHeader title="Warranty & Refresh" help="warranty-and-refresh"
-        subtitle="What is out of warranty, what is about to be, and what is due for replacement. Retired and lost items are left out."
+        subtitle="What is out of warranty, what is about to be, and what is due for replacement. Damaged and lost items are left out."
         actions={<>
           <button onClick={exportCsv} disabled={!sections}
             className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-2 text-sm disabled:opacity-50">

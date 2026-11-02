@@ -17,12 +17,16 @@ import { RequestForm, RequestReceipt, downloadReceipt } from "../components/Requ
 import { Card, EmptyState, ModalPortal, PENDING_EVENT, PageHeader, StatusBadge, TableSkeleton, cn, toast } from "../components/ui";
 
 const OPEN = ["Requested", "Approved", "Allocated"];
-const STATUS_CHOICES = { Requested: ["Approved", "Rejected", "Cancelled"], Approved: ["Requested", "Rejected", "Cancelled"],
-  Allocated: ["Delivered"], Delivered: [], Rejected: ["Requested"], Cancelled: ["Requested"] };
+const STATUS_CHOICES = {
+  Requested: ["Approved", "Rejected", "Cancelled"], Approved: ["Requested", "Rejected", "Cancelled"],
+  Allocated: ["Delivered"], Delivered: [], Rejected: ["Requested"], Cancelled: ["Requested"]
+};
 
 // Loan accessories requests move by hand: IT issues the unit on Allocate / Return.
-const LOAN_CHOICES = { Requested: ["Approved", "Rejected", "Cancelled"], Approved: ["Issued", "Rejected", "Cancelled"],
-  Issued: ["Returned"], Returned: [], Rejected: ["Requested"], Cancelled: ["Requested"] };
+const LOAN_CHOICES = {
+  Requested: ["Approved", "Rejected", "Cancelled"], Approved: ["Issued", "Rejected", "Cancelled"],
+  Issued: ["Returned"], Returned: [], Rejected: ["Requested"], Cancelled: ["Requested"]
+};
 const LOAN_OPEN = ["Requested", "Approved", "Issued"];
 
 const toReceipt = (r) => ({
@@ -31,39 +35,53 @@ const toReceipt = (r) => ({
   assetType: r.services || r.asset_type, urgency: r.urgency, photoCount: splitPhotos(r.attachment_path).length, justification: r.justification,
 });
 
-// The decision. Retyping one's own ID number is a signature, not a password:
-// it makes approving a deliberate act. approved_by is stamped by the database
-// from the session, never from anything typed here.
-function ApprovalBox({ r, idNumber, onDone }) {
+// Stage 2 — IT Approval Box. Shown to IT when Stage 1 (HOD) has been approved.
+function ITApprovalBox({ r, onDone }) {
   const [note, setNote] = useState("");
-  const [sig, setSig] = useState("");
   const [busy, setBusy] = useState(false);
+
   async function decide(decision) {
-    if (sig.trim() !== idNumber) return toast.error("Type your own ID number to sign the decision.");
-    if (decision === "Rejected" && !note.trim()) return toast.error("Say why the release is rejected.");
+    if (decision === "Rejected" && !note.trim()) {
+      return toast.error("Please provide a reason for rejecting this request.");
+    }
     setBusy(true);
-    const { error } = await supabase.from("equipment_request")
-      .update({ release_status: decision, approval_note: note.trim() || null }).eq("request_id", r.request_id);
+    // status, approved_by and approved_at are set by trg_guard_asset_release.
+    const { error } = await supabase.from("equipment_request").update({
+      release_status: decision, approval_note: note.trim() || null,
+    }).eq("request_id", r.request_id);
     setBusy(false);
     if (error) return toast.error(error.message);
-    toast.success(`Release for #${r.request_id} ${decision.toLowerCase()}.`);
+    toast.success(`Request #${r.request_id} ${decision.toLowerCase()} by IT.`);
     window.dispatchEvent(new Event(PENDING_EVENT));
     onDone();
   }
+
   return (
-    <div className="mt-3 rounded-xl border border-warn/40 bg-warn/5 p-3">
-      <p className="mb-2 flex items-center gap-1.5 text-sm font-semibold"><ShieldCheck className="h-4 w-4 text-warn" /> Release decision</p>
-      <textarea rows={2} className={inputCls} placeholder="Remarks (required to reject)" value={note} onChange={(e) => setNote(e.target.value)}
-        aria-label={`Remarks for request ${r.request_id}`} />
+    <div className="mt-3 rounded-xl border border-brand/30 bg-brand/5 p-3">
+      <p className="mb-2 flex items-center gap-1.5 text-sm font-semibold text-brand">
+        <ShieldCheck className="h-4 w-4" /> Stage 2 — IT Review & Stock Check
+      </p>
+      <textarea
+        rows={2}
+        className={inputCls}
+        placeholder="Remarks / Stock check notes (required if rejecting)"
+        value={note}
+        onChange={(e) => setNote(e.target.value)}
+        aria-label={`Remarks for request ${r.request_id}`}
+      />
       <div className="mt-2 flex flex-wrap items-center gap-2">
-        <input className={cn(inputCls, "w-44")} placeholder="Your ID number" value={sig} onChange={(e) => setSig(e.target.value)}
-          aria-label={`Sign with your ID number for request ${r.request_id}`} autoComplete="off" />
-        <button disabled={busy} onClick={() => decide("Approved")}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-ok px-3 py-2 text-sm font-medium text-white disabled:opacity-50">
-          <CheckCircle2 className="h-4 w-4" /> Approve release
+        <button
+          disabled={busy}
+          onClick={() => decide("Approved")}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-ok px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+        >
+          <CheckCircle2 className="h-4 w-4" /> Approve
         </button>
-        <button disabled={busy} onClick={() => decide("Rejected")}
-          className="inline-flex items-center gap-1.5 rounded-lg bg-danger px-3 py-2 text-sm font-medium text-white disabled:opacity-50">
+        <button
+          disabled={busy}
+          onClick={() => decide("Rejected")}
+          className="inline-flex items-center gap-1.5 rounded-lg bg-danger px-3 py-2 text-sm font-medium text-white disabled:opacity-50"
+        >
           <XCircle className="h-4 w-4" /> Reject
         </button>
       </div>
@@ -71,35 +89,46 @@ function ApprovalBox({ r, idNumber, onDone }) {
   );
 }
 
-function RequestCard({ r, staff, assetTag, canEdit, canDecide, idNumber, onChanged }) {
+function RequestCard({ r, canDecide, onChanged }) {
   const photos = splitPhotos(r.attachment_path);
-  const handler = staff.find((s) => s.staff_id === r.handled_by);
-  const update = async (patch, msg) => {
-    const { error } = await supabase.from("equipment_request").update(patch).eq("request_id", r.request_id);
-    if (error) return toast.error(error.message);
-    toast.success(msg);
-    if ("release_status" in patch) window.dispatchEvent(new Event(PENDING_EVENT));
-    onChanged();
-  };
+  const isHodPending = r.hod_approval_status === "Pending" || !r.hod_approval_status;
+  const isHodApproved = r.hod_approval_status === "Approved";
+  const isHodRejected = r.hod_approval_status === "Rejected";
+  const isItDecided = ["Approved", "Rejected"].includes(r.release_status) || ["Approved", "Rejected", "Cancelled"].includes(r.status);
+
   return (
     <li className="rounded-xl border border-border bg-surface p-3 sm:p-4" data-testid={`request-${r.request_id}`}>
       <div className="flex flex-wrap items-center gap-2">
         <span className="text-lg font-semibold">#{r.request_id}</span>
         <StatusBadge status={r.status} />
         {r.urgency === "Urgent" && <span className="rounded-full bg-danger/10 px-2 py-0.5 text-xs font-semibold text-danger">Urgent</span>}
-        {r.release_status && <span className="text-xs text-muted">Release: <StatusBadge status={r.release_status} /></span>}
+        <span className={cn(
+          "rounded-full px-2 py-0.5 text-xs font-semibold",
+          isHodApproved ? "bg-ok/15 text-ok" : isHodRejected ? "bg-danger/15 text-danger" : "bg-warn/15 text-warn"
+        )}>
+          HOD: {r.hod_approval_status || "Pending"}
+        </span>
+        {r.release_status && (
+          <span className="text-xs text-muted">IT: <StatusBadge status={r.release_status} /></span>
+        )}
         <span className="ml-auto text-xs text-muted">{fmtDateTime(r.created_at)}</span>
       </div>
+
       <p className="mt-1 text-sm">
         <span className="font-medium">{r.requested_by_name}</span>{r.employee_no && ` (${r.employee_no})`} · {r.department}
-        {r.hod && <> · HOD {r.hod}</>} · requests <span className="font-medium">{r.services || r.asset_type}</span>
+        {r.hod && <> · HOD <span className="font-medium">{r.hod}</span></>} · requests <span className="font-medium">{r.services || r.asset_type}</span>
       </p>
+
       {(r.requester_email || r.hod_email) && (
         <p className="mt-1 text-xs text-muted">
-          {r.requester_email && <>Requester: {r.requester_email}</>}{r.requester_email && r.hod_email && " · "}{r.hod_email && <>HOD: {r.hod_email}</>}
+          {r.requester_email && <>Requester: {r.requester_email}</>}
+          {r.requester_email && r.hod_email && " · "}
+          {r.hod_email && <>HOD: {r.hod_email}</>}
         </p>
       )}
+
       {r.justification && <p className="mt-1 whitespace-pre-line break-words text-sm text-muted">{r.justification}</p>}
+
       {photos.length > 0 && (
         <div className="mt-2 flex gap-2">
           {photos.map((u) => (
@@ -110,50 +139,41 @@ function RequestCard({ r, staff, assetTag, canEdit, canDecide, idNumber, onChang
           ))}
         </div>
       )}
-      <p className="mt-2 text-xs text-muted">
-        Handled by {handler?.full_name ?? "nobody yet"}
-        {assetTag && <> · asset <span className="font-medium text-fg">{assetTag}</span></>}
-        {r.delivered_at && <> · delivered {fmtDate(r.delivered_at)}</>}
-        {r.ack_at && <> · receipt confirmed by {r.ack_by_name}</>}
-        {r.approved_by && <> · release {r.release_status?.toLowerCase()} by {r.approved_by} {fmtDate(r.approved_at)}{r.approval_note && ` — “${r.approval_note}”`}</>}
-        {" · "}from {r.created_by_name || "—"}
-      </p>
 
-      <div className="mt-3 flex flex-wrap items-center gap-2">
-        {canEdit && (
-          <>
-            <select aria-label={`Handler for request ${r.request_id}`} className={cn(inputCls, "w-auto py-1.5")} value={r.handled_by ?? ""}
-              onChange={(e) => update({ handled_by: e.target.value ? Number(e.target.value) : null }, `Handler updated for #${r.request_id}.`)}>
-              <option value="">Assign handler…</option>
-              {staff.map((s) => <option key={s.staff_id} value={s.staff_id}>{s.full_name}</option>)}
-            </select>
-            {STATUS_CHOICES[r.status]?.length > 0 && (
-              <select aria-label={`Change status of request ${r.request_id}`} className={cn(inputCls, "w-auto py-1.5")} value=""
-                onChange={(e) => e.target.value && update(
-                  { status: e.target.value, ...(e.target.value === "Delivered" ? { delivered_at: new Date().toISOString() } : {}) },
-                  `#${r.request_id} is now ${e.target.value}.`)}>
-                <option value="">Set status…</option>
-                {STATUS_CHOICES[r.status].map((s) => <option key={s}>{s}</option>)}
-              </select>
-            )}
-            {["Requested", "Approved"].includes(r.status) && (
-              <a href={`/allocate/?request=${r.request_id}`} className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm">
-                <ArrowLeftRight className="h-4 w-4" /> Allocate
-              </a>
-            )}
-            {OPEN.includes(r.status) && (r.release_status == null || r.release_status === "Rejected") && (
-              <button onClick={() => update({ release_status: "Pending" }, `Release requested for #${r.request_id}.`)}
-                className="inline-flex items-center gap-1.5 rounded-lg border border-border px-3 py-1.5 text-sm">
-                <Hand className="h-4 w-4" /> Ask for release
-              </button>
-            )}
-          </>
+      {/* Decision trail */}
+      <div className="mt-2 text-xs space-y-0.5">
+        {r.hod_approved_by_name && (
+          <p className={isHodApproved ? "text-ok" : "text-danger"}>
+            Stage 1: HOD {r.hod_approval_status?.toLowerCase()} by {r.hod_approved_by_name} {fmtDate(r.hod_approved_at)}
+            {r.hod_approval_note && ` — “${r.hod_approval_note}”`}
+          </p>
         )}
+        {r.approved_by && (
+          <p className={r.release_status === "Approved" ? "text-ok" : "text-danger"}>
+            Stage 2: IT {r.release_status?.toLowerCase()} by {r.approved_by} {fmtDate(r.approved_at)}
+            {r.approval_note && ` — “${r.approval_note}”`}
+          </p>
+        )}
+      </div>
+
+      <div className="mt-3 flex items-center justify-between gap-2 border-t border-border/50 pt-2">
         <button onClick={() => downloadReceipt(toReceipt(r))} className="inline-flex items-center gap-1.5 rounded-lg px-2 py-1.5 text-sm text-muted hover:text-fg">
-          <Download className="h-4 w-4" /> Receipt
+          <Download className="h-4 w-4" /> Download receipt
         </button>
       </div>
-      {canDecide && r.release_status === "Pending" && <ApprovalBox r={r} idNumber={idNumber} onDone={onChanged} />}
+
+      {/* Stage 1: Waiting for HOD */}
+      {isHodPending && (
+        <div className="mt-2 rounded-lg border border-warn/30 bg-warn/5 p-2.5 text-xs text-warn">
+          ⏳ <strong>Stage 1 Pending:</strong> Awaiting HOD ({r.hod}) approval via email before IT can review.
+        </div>
+      )}
+
+      {/* Stage 2: IT Review & Stock check (active when HOD approved and IT has not decided) */}
+      {isHodApproved && !isItDecided && (canDecide
+        ? <ITApprovalBox r={r} onDone={onChanged} />
+        : <div className="mt-2 rounded-lg border border-border bg-surface p-2.5 text-xs text-muted">HOD approved. Waiting for the IT decision.</div>
+      )}
     </li>
   );
 }
@@ -256,7 +276,7 @@ export default function EntryPage() {
     const { data, error } = await supabase.from("equipment_request").insert({
       requested_by_name: fields.name, department: fields.department, asset_type: fields.services[0], urgency: fields.urgency,
       employee_no: fields.employee_no, hod: fields.hod, services: fields.services.join(", "),
-      requester_email: fields.email.toLowerCase(), hod_email: hods.find((h) => h.name === fields.hod)?.email ?? null,
+      requester_email: fields.email.toLowerCase() || null, hod_email: hods.find((h) => h.name === fields.hod)?.email ?? null,
       justification: fields.justification || null, attachment_path: urls.join("\n") || null,
     }).select("*").single();
     if (error) throw new Error(error.message);
@@ -267,7 +287,7 @@ export default function EntryPage() {
   return (
     <>
       <PageHeader title="Equipment Request" help="equipment-request"
-        subtitle="Raise a request for someone, and work the queue from request to delivery."
+        subtitle="Raise a request for someone. The HOD approves by email, then IT decides here."
         actions={
           <button onClick={() => setModal("form")} className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-2 text-sm font-medium text-brand-fg">
             <Plus className="h-4 w-4" /> New request
@@ -314,8 +334,8 @@ export default function EntryPage() {
       ))}
       {rows && view !== "loans" && shown.length === 0 && (
         <Card><EmptyState icon={ClipboardList}
-          title={view === "approvals" ? "Nothing waiting for a release decision" : "No open requests"}
-          message={view === "approvals" ? "Requests appear here when an officer asks for a release." : "New requests from the public form and from here appear in this queue."} /></Card>
+          title={view === "approvals" ? "Nothing waiting for an IT decision" : "No open requests"}
+          message={view === "approvals" ? "Requests appear here once the requester's HOD has approved them by email." : "New requests from the public form and from here appear in this queue."} /></Card>
       )}
       {rows && view !== "loans" && shown.length > 0 && (
         <ul className="space-y-3">

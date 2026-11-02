@@ -5,7 +5,7 @@
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle, Archive, ArrowLeftRight, CheckCircle2, ChevronDown, ChevronRight, Download, Filter, Package,
-  FileUp, Pencil, Plus, Search, Tags, Timer, UserCheck, Wrench, X,
+  FileUp, Layers, Pencil, Plus, Search, Tags, Timer, UserCheck, Wrench, X,
 } from "lucide-react";
 import { supabase } from "../../lib/supabaseClient";
 import { HW_STATUSES, LISTS, ASSET_STATUSES, MANUAL_STATUSES, WARRANTY_STATES, fmtDate, fmtRM, loadRegister } from "../../lib/assets";
@@ -13,9 +13,14 @@ import { downloadCsv } from "../../lib/csv";
 import { downloadXlsx } from "../../lib/xlsx";
 import { useAuth } from "./AuthProvider";
 import AssetDetail from "./AssetDetail";
-import AssetForm, { inputCls } from "./AssetForm";
+import AssetForm, { INK, inputCls } from "./AssetForm";
+import BulkAddForm from "./BulkAddForm";
+import { getNextTagForSeries } from "../../lib/hardware";
 import HardwareForm from "./HardwareForm";
 import HardwareImport from "./HardwareImport";
+import InkStock from "./InkStock";
+import QrScan from "./QrScan";
+import { parseAssetQr, parseQr } from "../../lib/hardwareImport";
 import {
   Card, EmptyState, HoldToConfirmButton, KpiCard, KpiSkeleton, ModalPortal, PageHeader, Pagination,
   SortableTh, StatusBadge, TableSkeleton, cn, toast,
@@ -27,14 +32,14 @@ const STATUS_KPIS = [
   { status: "In use", icon: UserCheck, tone: "info" },
   { status: "In repair", icon: Wrench, tone: "warn" },
   { status: "Loaned", icon: Timer, tone: "brand" },
-  { status: "Retired", icon: Archive, tone: "muted" },
+  { status: "Damaged", icon: Archive, tone: "muted" },
   { status: "Lost/Stolen", icon: AlertTriangle, tone: "danger" },
 ];
-// The two listings are a plain inventory view: no write-off counts, no money.
-export const LISTING_KPIS = STATUS_KPIS.filter((s) => !["Retired", "Lost/Stolen"].includes(s.status));
+// The two listings are a plain inventory view: no money. Lost/Stolen is counted
+// because a missing accessory is something IT chases; Damaged is not.
+export const LISTING_KPIS = STATUS_KPIS.filter((s) => s.status !== "Damaged");
 // IT Hardware counts its own status words (assets.hw_status), not custody status.
 export const HW_KPIS = [
-  { status: "Registered", icon: Package, tone: "brand" },
   { status: "Active", icon: UserCheck, tone: "info" },
   { status: "Handover", icon: ArrowLeftRight, tone: "warn" },
   { status: "Returned", icon: Archive, tone: "muted" },
@@ -75,7 +80,7 @@ const KPI_GRID = { 4: "sm:grid-cols-4", 5: "sm:grid-cols-3 xl:grid-cols-5", 6: "
 const custodyHref = (r) => (r.holder || (r.status === "In stock" && r.active) ? `/allocate/?asset=${r.asset_id}` : null);
 const custodyLabel = (r) => (r.holder ? "Return" : "Handover");
 
-const EMPTY_FILTERS = { q: "", type: "", status: "", department: "", location: "", warranty: "", from: "", to: "" };
+const EMPTY_FILTERS ={ q: "", type: "", status: "", department: "", location: "", warranty: "", from: "", to: "" };
 
 // `list` ("inventory" | "accessory" | "fixed") is the listing this page shows.
 
@@ -195,6 +200,21 @@ export default function RegisterPage({ list }) {
 
   async function applyBulkStatus() {
     const ids = [...selected];
+    if (hw && bulkStatus === "Vacant") {
+      const heldRows = rows.filter((r) => ids.includes(r.asset_id) && r.holder && r.holder !== "—");
+      for (const r of heldRows) {
+        await supabase.from("assets").update({ hw_status: "Vacant", previous_user: r.holder }).eq("asset_id", r.asset_id);
+        await supabase.rpc("return_asset", { p_asset_id: r.asset_id });
+      }
+      const otherIds = ids.filter((id) => !heldRows.some((r) => r.asset_id === id));
+      if (otherIds.length > 0) {
+        const { error } = await supabase.from("assets").update({ hw_status: "Vacant" }).in("asset_id", otherIds);
+        if (error) return toast.error(error.message);
+      }
+      toast.success(`${ids.length} device${ids.length === 1 ? "" : "s"} set to Vacant.`);
+      setBulkStatus("");
+      return reload();
+    }
     const { error } = await supabase.from("assets").update({ [hw ? "hw_status" : "status"]: bulkStatus }).in("asset_id", ids);
     // One statement: if any ticked asset is still held, the database refuses all of them.
     if (error) return toast.error(error.message);
@@ -205,10 +225,25 @@ export default function RegisterPage({ list }) {
 
   // The Status dropdown in an IT Inventory row. Active means someone is using
   // the device, so a device nobody holds opens the form to name them first.
+  // Setting status from Active to Vacant (or any held device to Vacant)
+  // automatically moves the current user to Previous user and frees the device.
   async function changeHwStatus(r, status) {
     if (status === "Active" && !r.holder) return setModal({ mode: "edit", asset: r, activate: true });
-    const { error } = await supabase.from("assets").update({ hw_status: status }).eq("asset_id", r.asset_id);
+
+    const curUser = r.holder && r.holder !== "—" ? r.holder : "";
+    const updates = { hw_status: status };
+    if (status === "Vacant" && curUser) {
+      updates.previous_user = curUser;
+    }
+
+    const { error } = await supabase.from("assets").update(updates).eq("asset_id", r.asset_id);
     if (error) return toast.error(error.message);
+
+    if (status === "Vacant" && curUser) {
+      const { error: retErr } = await supabase.rpc("return_asset", { p_asset_id: r.asset_id });
+      if (retErr) toast.error(`Status set to Vacant, but check-in note: ${retErr.message}`);
+    }
+
     toast.success(`${r.asset_tag} set to ${status}.`);
     reload();
   }
@@ -225,20 +260,35 @@ export default function RegisterPage({ list }) {
   const closeModal = () => setModal(null);
   // Register + Scan QR of a serial already stored: show that record instead.
   // A serial field may hold two, " / " separated.
+  const serialsOf = (a) => a.serial_no?.toUpperCase().split(/\s*\/\s*/) ?? [];
+  const showRecord = (r) => (r.list !== list
+    ? window.location.assign(`/${LIST_ROUTES[r.list]}/?q=${encodeURIComponent(r.asset_tag)}&open=1`)
+    : setModal({ mode: "detail", asset: r }));
   function showExisting(serial) {
-    const s = serial.toUpperCase();
-    const r = data.rows.find((a) => a.serial_no?.toUpperCase().split(/\s*\/\s*/).includes(s));
+    const r = data.rows.find((a) => serialsOf(a).includes(serial.toUpperCase()));
     if (!r) return false;
     toast.success(`Serial ${serial} is already registered as ${r.asset_tag}.`);
-    if (r.list !== list) window.location.assign(`/${LIST_ROUTES[r.list]}/?q=${encodeURIComponent(r.asset_tag)}&open=1`);
-    else setModal({ mode: "detail", asset: r });
+    showRecord(r);
     return true;
   }
-  const afterSave = () => { closeModal(); reload(); };
+  // Check: a scanned label is matched on asset tag or serial, in any listing.
+  function checkScan(text) {
+    const keys = new Set([text, ...Object.values(parseQr(text)), ...Object.values(parseAssetQr(text))]
+      .map((v) => String(v).trim().toUpperCase()).filter(Boolean));
+    const r = data.rows.find((a) => keys.has(a.asset_tag.toUpperCase()) || serialsOf(a).some((s) => keys.has(s)));
+    if (!r) return toast.error(`Not registered: ${text.trim()}`);
+    toast.success(`${r.asset_tag}: ${(r.list === "inventory" ? r.hw_status : r.status) || "no status"}${r.holder ? `, held by ${r.holder}` : ""}.`);
+    showRecord(r);
+  }
+  // inkRev remounts InkStock so a registered ink shows up.
+  const [inkRev, setInkRev] = useState(0);
+  const afterSave = () => { closeModal(); reload(); setInkRev((n) => n + 1); };
   const kpis = hw ? HW_KPIS : fx ? [] : LISTING_KPIS;
-  // Next free tag in this listing's series, e.g. HW-004 after HW-003.
+  const ink = cur === "accessory" && filters.type === INK;
+  // Next free tag in this listing's series (e.g. TPPC247 after TPPC246 for hardware, ACC-004 for accessories).
   const nextTag = useMemo(() => {
-    const prefix = hw ? "HW-" : fx ? null : "ACC-"; // fixed assets are tagged by their F/A Code
+    if (hw) return getNextTagForSeries("TPPC", data?.rows || []);
+    const prefix = fx ? null : "ACC-"; // fixed assets are tagged by their F/A Code
     if (!prefix) return "";
     const n = Math.max(0, ...(data?.rows ?? []).map((r) => r.asset_tag.startsWith(prefix) ? parseInt(r.asset_tag.slice(prefix.length), 10) || 0 : 0));
     return prefix + String(n + 1).padStart(3, "0");
@@ -249,6 +299,9 @@ export default function RegisterPage({ list }) {
       <PageHeader title={LISTS[list]} help="record-lists"
         subtitle={`Everything filed under ${LISTS[list]} categories, live from the database.`}
         actions={<>
+          {/* onExisting sees the raw text first; returning true skips the form-fill path. */}
+          {data && <QrScan label="Check" parse={(text) => ({ serial_no: text })} onScan={() => {}}
+            onExisting={(text) => (checkScan(text), true)} />}
           {isAdmin && (
             <a href="/manage/" className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-2 text-sm">
               <Tags className="h-4 w-4" /> Categories
@@ -264,6 +317,12 @@ export default function RegisterPage({ list }) {
               <FileUp className="h-4 w-4" /> Import Excel
             </button>
           )}
+          {!isViewer && cur === "accessory" && (
+            <button onClick={() => setModal({ mode: "bulk" })} disabled={!data}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-2 text-sm disabled:opacity-50">
+              <Layers className="h-4 w-4" /> Bulk add
+            </button>
+          )}
           {!isViewer && (
             <button onClick={() => setModal({ mode: "new" })} disabled={!data}
               className="inline-flex items-center gap-1.5 rounded-lg bg-brand px-3 py-2 text-sm font-medium text-brand-fg">
@@ -274,18 +333,26 @@ export default function RegisterPage({ list }) {
 
       {error && <Card className="mb-4 p-4 text-danger" role="alert">Error loading data: {error}</Card>}
 
-      {!data && !error ? <KpiSkeleton count={kpis.length} /> : data && (
+      {/* Category picker over the status cards: same state as the Category filter. */}
+      {data && cur === "accessory" && (
+        <select aria-label="Category" className={cn(inputCls, "mb-3 w-auto")} value={filters.type} onChange={(e) => setFilter("type", e.target.value)}>
+          <option value="">All categories</option>{categories.map((t) => <option key={t}>{t}</option>)}
+          <option>{INK}</option>
+        </select>
+      )}
+
+      {ink ? <InkStock key={inkRev} canEdit={!isViewer} /> : !data && !error ? <KpiSkeleton count={kpis.length} /> : data && (
         <div className={cn("grid grid-cols-2 gap-3", KPI_GRID[kpis.length])}>
           {kpis.map((s) => (
             <KpiCard key={s.status} label={s.status} icon={s.icon} tone={s.tone}
-              value={rows.filter((r) => statusOf(r) === s.status).length}
+              value={rows.filter((r) => statusOf(r) === s.status && (!filters.type || r.asset_type === filters.type)).length}
               active={filters.status === s.status}
               onClick={() => setFilter("status", filters.status === s.status ? "" : s.status)} />
           ))}
         </div>
       )}
 
-      <Card className="mt-4 p-3 md:p-4">
+      {!ink && <Card className="mt-4 p-3 md:p-4">
         <div className="flex gap-2">
           <div className="relative flex-1">
             <Search className="pointer-events-none absolute left-3 top-2.5 h-4 w-4 text-muted" />
@@ -489,7 +556,7 @@ export default function RegisterPage({ list }) {
             </>
           )}
         </div>
-      </Card>
+      </Card>}
 
       <ModalPortal wide open={!!modal} onClose={closeModal} labelledBy={modal?.mode === "detail" ? "asset-detail-title" : modal?.mode === "import" ? "import-title" : "asset-form-title"}>
         {modal?.mode === "detail" && (
@@ -518,10 +585,13 @@ export default function RegisterPage({ list }) {
           </>
         )}
         {modal?.mode === "import" && isAdmin && <HardwareImport data={data} isAdmin={isAdmin} onDone={reload} onClose={closeModal} />}
+        {modal?.mode === "bulk" && !isViewer && (
+          <BulkAddForm lookups={data.lookups} list={cur} nextTag={nextTag} departments={departments} onSaved={afterSave} onCancel={closeModal} />
+        )}
         {(modal?.mode === "edit" || modal?.mode === "new") && !isViewer && (
-          hw ? <HardwareForm asset={modal.asset} activate={modal.activate} lookups={data.lookups} departments={departments} isAdmin={isAdmin} nextTag={nextTag}
+          hw ? <HardwareForm asset={modal.asset} activate={modal.activate} lookups={data.lookups} departments={departments} isAdmin={isAdmin} nextTag={nextTag} existingRows={rows}
             onSaved={afterSave} onDeleted={afterSave} onCancel={closeModal} onExisting={modal.asset ? undefined : showExisting} />
-          : <AssetForm asset={modal.asset} lookups={data.lookups} list={cur} nextTag={nextTag} departments={departments} isAdmin={isAdmin}
+          : <AssetForm asset={modal.asset} defaultType={ink ? INK : undefined} lookups={data.lookups} list={cur} nextTag={nextTag} departments={departments} isAdmin={isAdmin}
             onSaved={afterSave} onDeleted={afterSave} onCancel={closeModal} onExisting={modal.asset ? undefined : showExisting} />
         )}
       </ModalPortal>

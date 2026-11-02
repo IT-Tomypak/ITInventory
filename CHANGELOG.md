@@ -5,6 +5,82 @@ the running version is in `app/version.js` and shown in the app's sidebar.
 
 ## Unreleased
 
+- **1.10.1.** Allocate / Return: Handover and Return take several items on one
+  form (one `allocate_asset` / `return_asset` call per item; a refused item
+  stays selected). The handover PDF lists every item, up to
+  `MAX_HANDOVER_ITEMS` (8), and the page shows the person's Employee ID, which
+  the PDF labels "Employee ID". A linked request closes on the item of its type.
+  `tools/check-handover.mjs` added.
+- **1.10.0.** Hardware status **Registered** removed: stored rows become
+  Active (a person holds it) or Vacant (`20261030000000_drop_hw_registered.sql`);
+  new devices default to Vacant. Allocate / Return: Handover lists only
+  unheld items and the transfer path is gone (return first, then hand over
+  again); category dropdown above the asset list on both tabs.
+- **1.9.9.** Public request and loan forms drop the name box. The
+  submit RPCs take the name from `staff.full_name` by staff ID (p_name only
+  a fallback), check the login first, and return `name` for the receipt
+  (`20261027000000_name_from_staff_id.sql`).
+- **1.9.8.** Allocate / Return: Handover lists every asset, not only
+  In stock + active (`allocate_asset` refuses what cannot be issued). A held
+  item is returned ("Transferred") then issued — a transfer. `assetMatch`
+  also searches asset_type, department, item_location, fa_code.
+- IT gets an email on every new equipment request (on submit, before the
+  HOD) and every new loan request: `notify` kinds `new_request` / `new_loan`
+  to the `equipment_request` list; triggers ship DISABLED with email
+  (`20261016020000_notify_it_on_submit.sql`). Fixed a raw line break inside
+  a regex in `notify/index.ts` that stopped the function compiling.
+
+- **1.9.6.** IT Accessories: category dropdown above the status cards
+  scopes the counts (and the table) to one category. New **Ink** choice:
+  stock per brand/colour (`ink_stock`, `adjust_ink()`), registered from
+  Register asset (Brand / Colour / Quantity), −/+ on each colour
+  (`20261016000000_ink_stock.sql`).
+- **1.9.5.** Handover on Allocate / Return downloads a signable A4 handover
+  form (`lib/handover-pdf.js`, built on the exported `receipt-pdf.js` writer;
+  receipt bytes unchanged) with an optional Purpose field. Public request and
+  loan forms require Staff ID + Password (password = staff ID, checked by
+  `staff_login_ok()` against `staff.employee_no`); email is optional on both,
+  loans store `requester_email`
+  (`20261015000000_staff_login_on_public_forms.sql`). Live probes need
+  `PROBE_STAFF_ID`.
+- **1.9.4.** Serial-only Scan buttons pick the value after `S/N`, `SN:` or
+  `Serial number:` out of the QR text (`parseSerialQr`); unlabelled text is
+  still the whole serial.
+- **1.9.3.** Photos (Camera / Gallery) on the IT hardware form (shared
+  `PhotoPicker`, saved via `saveHardware` `photo_path`). Fixed-asset Scan QR
+  reads unkeyed labels as `TAG MAKE MODEL…` (`parseAssetQr`). Every register
+  form's serial field gets its own Scan button (whole QR text = serial; bulk
+  add appends a line). The scanner can import a gallery image.
+- **1.9.2.** IT Inventory: Series numbering tracks current max numbers for
+  fixed names (`TPPC`, `TPLL`, `TPDL`, `TPML`). Registering a new item
+  automatically increments to `max + 1` (e.g. `TPPC247` when current is `246`),
+  provides quick series selection buttons with live current numbers, and enforces
+  that any new item must have a number greater than the current number.
+- **1.9.1.** IT Inventory: Setting status to **Vacant** (via inline table dropdown,
+  bulk action, hardware form, or Excel import) automatically moves the current
+  user into `previous_user`, clears the holder, and checks the device back into
+  custody via `return_asset`.
+- **1.9.0.** Status `Retired` renamed `Damaged`
+  (`20261013030000_damaged_status.sql`: CHECK and rows; no function named it).
+  `LISTING_KPIS` now includes Lost/Stolen, so the IT Accessories cards and the
+  Dashboard's "All items by custody" row show five counts.
+- **1.8.0.** Bulk add on IT Accessories (`app/components/BulkAddForm.js`):
+  category, quantity and the shared details once, optional serial numbers one
+  per line (their count becomes the quantity). Tags continue the `ACC-` series
+  from the next free number. One INSERT, so a tag collision adds nothing. Up to
+  200 items a save. No schema change.
+- **1.7.1.** Two-stage approval (`20261013000000_two_stage_approval.sql`,
+  `20261013010000_simplify_notify_recipients.sql`,
+  `20261013020000_two_stage_fixes.sql`). `equipment_request` gains
+  `hod_approval_status` and its stamp columns; `assign_token` gains the
+  `hod_approve` / `hod_reject` actions. `notify` kinds: `hod_request` (to
+  `hod_email`, two one-use links), `it_review` (to purpose `equipment_request`,
+  after the HOD approves), `hod_rejected` (to `requester_email`); `new_request`
+  and its Allocate / Assign buttons are removed. `/assign` asks a HOD for an ID
+  number, and a reason to reject. The request card loses Assign handler, Set
+  status, Allocate and Ask for release; IT's decision box shows only after the
+  HOD approves. `/status` shows both approvals. The three new triggers ship
+  DISABLED with the rest of the mail.
 - **1.6.0.** Request emails, groundwork (`20261012050000_request_email_and_hods.sql`).
   New `hod` table (name, email; admin-written) seeded with IT's 20 HODs;
   `hod_names()` gives the public form names only. `equipment_request` gains

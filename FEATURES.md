@@ -17,7 +17,7 @@ browser, on a phone as well as a desktop, with light and dark themes.
 ## Record lists
 
 - IT Inventory, IT Accessories and IT Fixed Assets: one live list each, with counts by status: In stock, In use,
-  Loaned, In repair, Retired, Lost/Stolen.
+  Loaned, In repair, Damaged, Lost/Stolen.
 - Search by tag, serial, make, model or holder; filter by type, status,
   department, location and warranty.
 - Full record per asset: details, photos, current and past holders, and the

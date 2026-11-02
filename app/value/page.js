@@ -61,8 +61,8 @@ export default function ValuePage() {
 
   const v = useMemo(() => {
     if (!data) return null;
-    // Retired / lost items carry no book value; inactive rows are not in service.
-    const rows = data.rows.filter((r) => r.active && !["Retired", "Lost/Stolen"].includes(r.status));
+    // Damaged / lost items carry no book value; inactive rows are not in service.
+    const rows = data.rows.filter((r) => r.active && !["Damaged", "Lost/Stolen"].includes(r.status));
     const costed = rows.filter((r) => r.purchase_cost_rm != null);
     const year = Number(today().slice(0, 4));
     const months = new Map();

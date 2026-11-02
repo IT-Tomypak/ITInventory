@@ -27,7 +27,9 @@ const saved = await soloNotify();
 let id;
 try {
   const sub = await anon.rpc("submit_equipment_request", { p_name: "check-assign probe", p_department: "IT",
-    p_asset_type: "Other", p_justification: "check-assign.mjs probe, cancelled automatically", p_urgency: "Normal", p_attachment: null });
+    p_asset_type: "Other", p_justification: "check-assign.mjs probe, cancelled automatically", p_urgency: "Normal", p_attachment: null,
+    // The form needs a real staff ID (its password is the ID): set PROBE_STAFF_ID.
+    p_employee_no: process.env.PROBE_STAFF_ID, p_password: process.env.PROBE_STAFF_ID });
   if (!sub.data?.ok) throw new Error(`submit failed: ${sub.error?.message ?? sub.data?.reason}`);
   id = sub.data.request_id;
   const token = (await admin.rpc("create_assignment_link", { p_request_id: id, p_action: "assign_officer" })).data;

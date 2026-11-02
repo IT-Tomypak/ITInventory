@@ -15,9 +15,16 @@ function steps(s) {
   const allocated = s.allocated || ["Allocated", "Delivered"].includes(s.status);
   return [
     { label: "Request received", done: true, at: s.created_at },
-    ...(s.release_status ? [{ label: s.release_status === "Rejected" ? "Release not approved" : "Release approved",
+    ...(s.hod_approval_status ? [{
+      label: s.hod_approval_status === "Rejected" ? "Not approved by your HOD" : "Approved by your HOD",
+      done: s.hod_approval_status !== "Pending", bad: s.hod_approval_status === "Rejected", at: s.hod_approved_at,
+      note: s.hod_approval_status === "Pending" ? "Waiting for your HOD" : null
+    }] : []),
+    ...(s.release_status ? [{
+      label: s.release_status === "Rejected" ? "Not approved by IT" : "Approved by IT",
       done: s.release_status !== "Pending", bad: s.release_status === "Rejected", at: s.approved_at,
-      note: s.release_status === "Pending" ? "Waiting for the asset custodian" : null }] : []),
+      note: s.release_status === "Pending" ? "Waiting for IT" : null
+    }] : []),
     { label: "Equipment assigned to you", done: allocated, at: null },
     { label: "Delivered", done: !!s.delivered_at || s.status === "Delivered", at: s.delivered_at },
     { label: "Receipt confirmed", done: !!s.ack_at, at: s.ack_at },
